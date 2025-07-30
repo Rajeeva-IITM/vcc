@@ -1,0 +1,13 @@
+defaults:
+  - data: dataset
+  - model: model
+  - trainer: trainer
+  - callbacks: defaults
+  - paths: defaults
+  - logging: wandb
+  # - hydra: defaults
+  - _self_
+
+logging:
+  wandb:
+    job_type: KFold

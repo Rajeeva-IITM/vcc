@@ -1,0 +1,19 @@
+defaults:
+  - data: dataset
+  - model: model
+  - trainer: null
+  - callbacks: null
+  - paths: defaults
+  - logging: null
+  - _self_
+
+device: cpu
+
+train_data:
+  name: ${data.metadata.groupname}
+  ckpt_loc: ??? # Location of the all the checkpoints
+  # ckpt: ???
+
+test_data:
+  name: Bloom2015
+  data_path: ${paths.data_dir}bloom_clf_3_pubchem.feather

@@ -1,0 +1,16 @@
+datamodule:
+  _target_: main_code.data.KFoldEncodeModule
+  path: ${paths.data_dir}bloom2013_clf_3_pubchem.feather # Default path
+  format: feather
+  # k: 0   # Won't work if I initialize here
+  split_seed: 42
+  num_splits: 5
+  num_workers: 4
+  batch_size: 64
+  test_size: 0.2
+  stratify: "Phenotype"
+
+metadata:
+  groupname: Bloom2013
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y} # Always with respect to the top config
+#

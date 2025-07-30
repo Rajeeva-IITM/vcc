@@ -1,0 +1,12 @@
+defaults:
+  - model_checkpoint
+  - model_summary
+  - rich_progress_bar
+
+model_checkpoint:
+  monitor: "val_auc_roc"
+  mode: "max"
+  save_last: 5
+
+model_summary:
+  max_depth: 1

@@ -1,0 +1,15 @@
+_target_: main_code.lightning_model.NetMultiViewLightning
+
+# Params for Bloom2013
+
+layers_before_concat: [2048, 1024]
+layers_after_concat: [512, 256, 128, 64, 32]
+input_size: [6014, 64]
+output_size: 1
+dropout: 0.3003533
+activation: relu
+lr: 0.00142918
+max_lr: 0.00155808
+weight_decay: 0.00293319
+task: binary_classification
+loss_function: bce

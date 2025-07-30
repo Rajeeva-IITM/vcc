@@ -1,0 +1,9 @@
+rich_progress_bar:
+  _target_: lightning.pytorch.callbacks.RichProgressBar
+  theme:
+    _target_: lightning.pytorch.callbacks.progress.rich_progress.RichProgressBarTheme
+    description: "#af005f"
+    progress_bar_finished: green_yellow
+    batch_progress: "cyan1"
+    time: "bright_red"
+    metrics: "gold3"

@@ -57,6 +57,7 @@ class VCCDataset(Dataset):
         ko_expression: pl.DataFrame,
         control_expression: pl.DataFrame,
         ko_gene_data: pl.DataFrame,
+        # dtype: torch.dtype | = torch.float32,
     ) -> None:
         """Dataset for holding the expression to_numpy() and the knockout vector
 
@@ -88,6 +89,7 @@ class VCCDataset(Dataset):
         self.ko_expression = ko_expression.to_numpy()
         self.control_expression = control_expression.to_numpy()
         self.ko_gene_data = ko_gene_data.to_numpy()
+        # self.dtype = dtype
 
         del ko_expression, control_expression, ko_gene_data
         gc.collect()
@@ -112,9 +114,11 @@ class VCCDataset(Dataset):
                 and the knockout expression tensor as the target.
         """
 
-        ko_input = torch.from_numpy(self.ko_gene_data[index, :])
-        exp_input = torch.from_numpy(self.control_expression[index, :])
-        pred_input = torch.from_numpy(self.ko_expression[index, :])
+        ko_input = torch.from_numpy(self.ko_gene_data[index, :]).to(torch.float16)
+        exp_input = torch.from_numpy(self.control_expression[index, :]).to(
+            torch.float16
+        )
+        pred_input = torch.from_numpy(self.ko_expression[index, :]).to(torch.float16)
 
         return {"ko_vec": ko_input, "exp_vec": exp_input}, pred_input
 
