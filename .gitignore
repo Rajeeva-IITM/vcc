@@ -1,6 +1,6 @@
 # pixi environments
 .pixi
-
+outputs/
 .env
 
 */lightning_logs/*

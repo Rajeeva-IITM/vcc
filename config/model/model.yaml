@@ -1,15 +1,30 @@
-_target_: main_code.lightning_model.NetMultiViewLightning
-
-# Params for Bloom2013
-
-layers_before_concat: [2048, 1024]
-layers_after_concat: [512, 256, 128, 64, 32]
-input_size: [6014, 64]
-output_size: 1
-dropout: 0.3003533
-activation: relu
-lr: 0.00142918
-max_lr: 0.00155808
-weight_decay: 0.00293319
-task: binary_classification
-loss_function: bce
+_target_: src.models.vcc_lightning.VCCModule
+net:
+  _target_: src.models.components.basic_vcc_model.CellModel
+  ko_processor_args:
+    input_size: 18080
+    hidden_layers: [2048, 1024, 512, 256]
+    output_size: 128
+    dropout: 0.0
+    activation: relu
+  exp_processor_args:
+    input_size: 18080
+    hidden_layers: [2048, 1024, 512, 256]
+    output_size: 128
+    dropout: 0.0
+    activation: relu
+  concat_processor_args:
+    input_size: 256 # ${model.net.ko_processor_args.output_size} + ${model.net.exp_processor_args.output_size}
+    hidden_layers: [256,256,256]
+    output_size: 128
+    dropout: 0.0
+    activation: relu
+  decoder_args:
+    input_size: ${model.net.concat_processor_args.output_size}
+    hidden_layers: [256,512,1024,2048]
+    output_size: ${model.net.exp_processor_args.input_size}
+    dropout: 0.0
+    activation: relu
+lr: 1e-3
+max_lr: 1e-2
+weight_decay: 1e-5

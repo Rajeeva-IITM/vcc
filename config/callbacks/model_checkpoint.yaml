@@ -2,7 +2,7 @@
 
 model_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
-  dirpath: ${paths.output_dir}${data.metadata.savename} # directory to save the model file
+  dirpath: ${paths.output_dir}/${data.metadata.savename} # directory to save the model file
   filename: ${data.metadata.groupname}-{epoch}_{step} # checkpoint filename
   monitor: val_loss # name of the logged metric which determines when model is improving
   verbose: False # verbosity mode

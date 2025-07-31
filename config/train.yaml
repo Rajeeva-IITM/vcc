@@ -8,6 +8,8 @@ defaults:
   # - hydra: defaults
   - _self_
 
+seed: 42
+
 logging:
   wandb:
-    job_type: KFold
+    job_type: VCC

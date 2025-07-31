@@ -4,8 +4,8 @@ defaults:
   - rich_progress_bar
 
 model_checkpoint:
-  monitor: "val_auc_roc"
-  mode: "max"
+  monitor: "val/loss"
+  mode: "min"
   save_last: 5
 
 model_summary:

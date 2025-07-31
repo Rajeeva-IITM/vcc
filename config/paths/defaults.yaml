@@ -1,11 +1,9 @@
 # Some important paths
 
-root_dir: ${oc.env:PROJECT}/yeast_growth_pred/
+root_dir: ${oc.env:PROJECT}
 
-data_dir: ${oc.env:PROJECT}/data/
+data_dir: ${oc.env:DATA_DIR}
 
-log_dir: ${oc.env:PROJECT}/runs/multiview/
+log_dir: ${oc.env:RUN_DIR}
 
-output_dir: ${oc.env:PROJECT}/runs/multiview/
-
-FGR_dir: ${oc.env:PROJECT}/yeast_growth_pred/main_code/FGR/
+output_dir: ${oc.env:RUN_DIR}

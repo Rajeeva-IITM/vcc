@@ -1,4 +1,5 @@
 import gc
+import warnings
 from pathlib import Path
 from typing import Dict, Tuple, Union
 
@@ -85,11 +86,14 @@ class VCCDataset(Dataset):
         # print(ko_gene_data)
         # print(control_expression)
 
-        # Converting to pandas because polars misbehaves with multiprocessing
+        # Converting to numpy because polars misbehaves with multiprocessing
         self.ko_expression = ko_expression.to_numpy()
         self.control_expression = control_expression.to_numpy()
         self.ko_gene_data = ko_gene_data.to_numpy()
         # self.dtype = dtype
+
+        # print(f"Data lengths\
+        #         {self.ko_expression.shape, self.control_expression.shape, self.ko_gene_data.shape}")
 
         del ko_expression, control_expression, ko_gene_data
         gc.collect()
@@ -101,7 +105,7 @@ class VCCDataset(Dataset):
             int: The number of rows in the ko_expression attribute.
         """
 
-        return self.ko_expression.shape[0]
+        return len(self.ko_expression)
 
     def __getitem__(self, index: int) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
@@ -114,11 +118,9 @@ class VCCDataset(Dataset):
                 and the knockout expression tensor as the target.
         """
 
-        ko_input = torch.from_numpy(self.ko_gene_data[index, :]).to(torch.float16)
-        exp_input = torch.from_numpy(self.control_expression[index, :]).to(
-            torch.float16
-        )
-        pred_input = torch.from_numpy(self.ko_expression[index, :]).to(torch.float16)
+        ko_input = self.ko_gene_data[index, :].astype(np.float16)
+        exp_input = self.control_expression[index, :].astype(np.float16)
+        pred_input = self.ko_expression[index, :].astype(np.float16)
 
         return {"ko_vec": ko_input, "exp_vec": exp_input}, pred_input
 
@@ -131,10 +133,16 @@ class VCCDataModule(LightningDataModule):
     Parameters
     ----------
 
-    data_path : Union[str, Path]
+    train_exp_data_path : str | Path
         Path to the dataset
-    ko_data_path : Union[str, Path]
+    train_ko_data_path : str | Path
         Path to ko_gene_data
+    control_data_path: str | Path
+        Path to control expression
+    test_exp_data_path: str | Path
+        Path to test expression (not available but included for consistency), defaults to None
+    test_ko_data_path: str | Path
+        Path to test Knockout data, defaults to None
     seed : int, optional
         Random seed, by default 42
     num_workers : int, optional
@@ -147,8 +155,11 @@ class VCCDataModule(LightningDataModule):
 
     def __init__(
         self,
-        data_path: Union[str, Path],
-        ko_data_path: Union[str, Path],
+        train_exp_data_path: str | Path,
+        train_ko_data_path: str | Path,
+        control_data_path: str | Path,
+        test_exp_data_path: str | Path = None,
+        test_ko_data_path: str | Path = None,
         seed: int = 42,
         num_workers: int = 4,
         batch_size: int = 64,
@@ -156,8 +167,13 @@ class VCCDataModule(LightningDataModule):
     ):
         super().__init__()
 
-        self.data_path = data_path
-        self.ko_data_path = ko_data_path
+        self.train_exp_data_path = train_exp_data_path
+        self.train_ko_data_path = train_ko_data_path
+        self.control_data_path = control_data_path  # Common for both train and test
+        self.test_exp_data_path = (
+            test_exp_data_path  # Not really available so just pass in control data
+        )
+        self.test_ko_data_path = test_ko_data_path
         self.seed = seed
         self.num_workers = num_workers
         self.batch_size = batch_size
@@ -170,62 +186,86 @@ class VCCDataModule(LightningDataModule):
         Reads expression and knockout gene data, processes and samples control data,
         creates the dataset, and splits it into training and test subsets.
         """
-        console.log("Setting up data")
 
-        data = read_data(self.data_path).sort("sample_index")
-        ko_gene_data = read_data(self.ko_data_path).sort(
-            "sample_index"
-        )  # Order both of them
+        match stage:
+            case "predict":
+                console.log("Setting up data for prediction")
 
-        # assert data.shape[0] == ko_exp_data.shape[0], (
-        #     "row count mismatch between data and ko_exp_data"
-        # )
+                if (self.test_exp_data_path is None) | (self.test_ko_data_path is None):
+                    raise TypeError(
+                        "`test_exp_data_path` and `test_ko_data_path` must be present"
+                    )
 
-        # Separate knockout data and control data
-        console.log("Expression data processing")
-        control_indices = data.filter(
-            ~pl.col("sample_index").is_in(ko_gene_data["sample_index"].implode())
-        )["sample_index"]  # identify indices not in ko_gene
-        length = ko_gene_data.shape[0]  # Number of non control indices
+                console.log("Reading data")
+                test_exp_data = read_data(self.test_exp_data_path).select(cs.numeric())
+                test_ko_data = read_data(self.test_ko_data_path).select(cs.numeric())
 
-        # Since number of control data points is smaller, sampling with replacement
-        self.control_exp_data = (
-            data.filter(pl.col("sample_index").is_in(control_indices.implode()))
-            .select(cs.numeric())
-            .sample(
-                length,  # type: ignore
-                with_replacement=True,
-                seed=self.seed,
-            )
-        )
+                control_data = read_data(self.control_data_path)
+                length = test_ko_data.shape[0]  # Number of non control indices
 
-        self.expression_data = data.filter(
-            ~pl.col("sample_index").is_in(control_indices.implode())
-        ).select(cs.numeric())
+                # Since number of control data points is smaller, sampling with replacement
+                if control_data.shape[0] < length:
+                    warnings.warn(
+                        "Number of samples in control data is lower than the expression. Performing sampling with replacement"
+                    )
+                    control_data = control_data.select(cs.numeric()).sample(
+                        length,  # type: ignore
+                        with_replacement=True,
+                        seed=self.seed,
+                    )
 
-        self.ko_gene_data = ko_gene_data.select(cs.numeric())
+                self.test_data = VCCDataset(test_exp_data, control_data, test_ko_data)
 
-        del ko_gene_data, data
-        gc.collect()
+                del control_data, test_ko_data, test_exp_data
+                gc.collect()
 
-        # Assembling the pieces
-        console.log("Creating Dataset")
-        self.data = VCCDataset(
-            self.expression_data, self.control_exp_data, self.ko_gene_data
-        )
+            case _:
+                console.log("Setting up data")
+                data = read_data(self.train_exp_data_path).select(cs.numeric())
+                ko_gene_data = read_data(self.train_ko_data_path)
 
-        console.log("Data splitting")
-        train_index, test_index = train_test_split(
-            np.linspace(1, length, length, dtype=int).tolist(),  # type: ignore
-            test_size=self.test_size,
-            random_state=self.seed,
-        )
+                assert data.shape[0] == ko_gene_data.shape[0], (
+                    "row count mismatch between data and ko_exp_data"
+                )
 
-        console.log("Split data generation")
-        self.train_data = Subset(self.data, train_index)
-        self.test_data = Subset(self.data, test_index)
+                # Separate knockout data and control data
+                console.log("Expression data processing")
 
-        console.log("Setup Done")
+                control_data = read_data(self.control_data_path)
+                length = ko_gene_data.shape[0]  # Number of non control indices
+
+                # Since number of control data points is smaller, sampling with replacement
+                if control_data.shape[0] < length:
+                    warnings.warn(
+                        "Number of samples in control data is lower than the expression. Performing sampling with replacement"
+                    )
+                    control_data = control_data.select(cs.numeric()).sample(
+                        length,  # type: ignore
+                        with_replacement=True,
+                        seed=self.seed,
+                    )
+
+                ko_gene_data = ko_gene_data.select(cs.numeric())
+
+                # Assembling the pieces
+                console.log("Creating Dataset")
+                self.data = VCCDataset(data, control_data, ko_gene_data)
+
+                console.log("Data splitting")
+                train_index, val_index = train_test_split(
+                    list(range(length)),  # type: ignore
+                    test_size=self.test_size,
+                    random_state=self.seed,
+                )
+
+                console.log("Split data generation")
+                self.train_data = Subset(self.data, train_index)
+                self.val_data = Subset(self.data, val_index)
+
+                del ko_gene_data, data  # Clean up
+                gc.collect()
+
+                console.log("Setup Done")
 
     def train_dataloader(self):
         """
@@ -251,7 +291,7 @@ class VCCDataModule(LightningDataModule):
         """
         console.log("Creating Validation Dataloader")
         return DataLoader(
-            self.test_data,
+            self.val_data,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             shuffle=False,
@@ -273,8 +313,8 @@ class VCCDataModule(LightningDataModule):
 
 if __name__ == "__main__":
     dm = VCCDataModule(
-        data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-counts_uint.parquet",
-        ko_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-gene_ko_uint.parquet",
+        train_exp_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-counts_uint.parquet",
+        train_ko_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-gene_ko_uint.parquet",
         # num_workers=2,
     )
     dm.setup()

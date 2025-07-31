@@ -5,6 +5,7 @@ import torchmetrics
 from lightning.pytorch import LightningModule
 from torch import nn
 
+# from icecream import ic
 from src.models.components.basic_vcc_model import CellModel
 
 
@@ -36,7 +37,7 @@ class CompositeLoss(nn.Module):
         assert 0 <= lambda_val <= 1, "lambda value must be between 0 and 1"
 
         self.lambda_val = lambda_val
-        self.mae_loss = nn.L1Loss()
+        # self.mae_loss = torchmetrics.MeanAbsoluteError()
 
     def forward(self, y_pred, y_true):
         """
@@ -48,10 +49,12 @@ class CompositeLoss(nn.Module):
             Tensor: Computed loss value.
         """
 
-        mae = self.mae_loss(y_pred, y_true)
-        corr = torchmetrics.functional.cosine_similarity(y_true, y_pred).mean()
+        mae = torchmetrics.functional.mean_absolute_error(y_true, y_pred)
+        cosine = torchmetrics.functional.cosine_similarity(
+            y_true, y_pred, reduction="mean"
+        )
 
-        loss = self.lambda_val * mae + (1 - self.lambda_val) * (1 - corr)
+        loss = self.lambda_val * mae + (1 - self.lambda_val) * (1 - cosine)
 
         return loss
 
@@ -93,15 +96,15 @@ class VCCModule(LightningModule):
         self.weight_decay = weight_decay
 
         self.train_mae = torchmetrics.MeanAbsoluteError()
-        self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
+        # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.train_mse = torchmetrics.MeanSquaredError()
 
         self.val_mae = torchmetrics.MeanAbsoluteError()
-        self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
+        # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.val_mse = torchmetrics.MeanSquaredError()
 
         self.test_mae = torchmetrics.MeanAbsoluteError()
-        self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
+        # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.test_mse = torchmetrics.MeanSquaredError()
 
     # def configure_optimizers(self) -> Dict[str, Any]:
@@ -158,6 +161,7 @@ class VCCModule(LightningModule):
         """
         Training step
         """
+        # ic(batch)
         X, y = batch
         y_pred = self.forward(X)
         # ic(y, y.shape)
@@ -165,7 +169,9 @@ class VCCModule(LightningModule):
         loss = self.criterion(y_pred, y)
 
         self.train_mae.update(y_pred, y)
-        self.train_cosine.update(y_pred, y)
+        self.train_cosine = torchmetrics.functional.cosine_similarity(
+            y_pred, y, reduction="mean"
+        )
         self.train_mse.update(y_pred, y)
 
         self.log(
@@ -208,7 +214,9 @@ class VCCModule(LightningModule):
         loss = self.criterion(y_pred, y)
 
         self.val_mae.update(y_pred, y)
-        self.val_cosine.update(y_pred, y)
+        self.val_cosine = torchmetrics.functional.cosine_similarity(
+            y_pred, y, reduction="mean"
+        )
         self.val_mse.update(y_pred, y)
 
         self.log(
@@ -251,7 +259,9 @@ class VCCModule(LightningModule):
         loss = self.criterion(y_pred, y)
 
         self.test_mae.update(y_pred, y)
-        self.test_cosine.update(y_pred, y)
+        self.test_cosine = torchmetrics.functional.cosine_similarity(
+            y_pred, y, reduction="mean"
+        )
         self.test_mse.update(y_pred, y)
 
         self.log(
