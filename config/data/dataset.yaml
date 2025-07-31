@@ -3,7 +3,7 @@ datamodule:
   train_ko_data_path: ${paths.data_dir}/processed-data/training_data-gene_ko_uint.parquet
   train_exp_data_path: ${paths.data_dir}/processed-data/training_data-counts_uint.parquet # Default path
   control_data_path: ${paths.data_dir}/processed-data/control_exp_data_uint.parquet
-  test_ko_data_path: ${paths.data_dir}/processed-data/validation-gene_ko_uint.parquet
+  test_ko_data_path: ${paths.data_dir}/processed-data/validation_data-gene_ko.parquet
   test_exp_data_path: ${paths.data_dir}/processed-data/control_exp_data_uint.parquet # Default path
   seed: ${seed} # Specify seed in the top config
   num_workers: 8

@@ -5,4 +5,5 @@ if __name__ == "__main__":
     a = torch.randn(3, 5)
     b = torch.randn_like(a)
     metric = torchmetrics.functional.mean_absolute_error(a, b)
-    print(metric)
+    metric2 = torchmetrics.ExplainedVariance()(a, b)
+    print(metric, metric2)

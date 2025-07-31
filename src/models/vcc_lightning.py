@@ -295,55 +295,62 @@ class VCCModule(LightningModule):
 
         return loss
 
+    def predict_step(self, batch, batch_ix):
+        X, _ = batch
+        y_pred = self.forward(X)
+
+        return y_pred
+
 
 if __name__ == "__main__":
-    from lightning.pytorch import Trainer
+    # from lightning.pytorch import Trainer
 
-    from src.data.vcc_datamodule import VCCDataModule
+    # from src.data.vcc_datamodule import VCCDataModule
 
-    torch.set_float32_matmul_precision("high")
+    # torch.set_float32_matmul_precision("high")
 
-    net = CellModel(  # ko_input, exp_input and decoder_ouput must have same size
-        ko_processor_args={
-            "input_size": 18080,
-            "hidden_layers": [16, 8],
-            "output_size": 4,
-            "dropout": 0.2,
-            "activation": "relu",
-        },
-        exp_processor_args={
-            "input_size": 18080,
-            "hidden_layers": [18, 8],
-            "output_size": 4,
-            "dropout": 0.2,
-            "activation": "relu",
-        },
-        concat_processor_args={
-            "input_size": 8,  # 4 + 4 from previous outputs
-            "hidden_layers": [8],
-            "output_size": 6,
-            "dropout": 0.2,
-            "activation": "relu",
-        },
-        decoder_args={
-            "input_size": 6,
-            "hidden_layers": [6],
-            "output_size": 18080,
-            "dropout": 0.2,
-            "activation": "relu",
-        },
-    )
+    # net = CellModel(  # ko_input, exp_input and decoder_ouput must have same size
+    #     ko_processor_args={
+    #         "input_size": 18080,
+    #         "hidden_layers": [16, 8],
+    #         "output_size": 4,
+    #         "dropout": 0.2,
+    #         "activation": "relu",
+    #     },
+    #     exp_processor_args={
+    #         "input_size": 18080,
+    #         "hidden_layers": [18, 8],
+    #         "output_size": 4,
+    #         "dropout": 0.2,
+    #         "activation": "relu",
+    #     },
+    #     concat_processor_args={
+    #         "input_size": 8,  # 4 + 4 from previous outputs
+    #         "hidden_layers": [8],
+    #         "output_size": 6,
+    #         "dropout": 0.2,
+    #         "activation": "relu",
+    #     },
+    #     decoder_args={
+    #         "input_size": 6,
+    #         "hidden_layers": [6],
+    #         "output_size": 18080,
+    #         "dropout": 0.2,
+    #         "activation": "relu",
+    #     },
+    # )
 
-    model = VCCModule(net=net, lr=1e-3, max_lr=1e-2, weight_decay=1e-5)
-    # ic(model.dtype)
+    # model = VCCModule(net=net, lr=1e-3, max_lr=1e-2, weight_decay=1e-5)
+    # # ic(model.dtype)
 
-    datamodule = VCCDataModule(
-        data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-counts_uint.parquet",
-        ko_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-gene_ko_uint.parquet",
-    )
+    # datamodule = VCCDataModule(
+    #     data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-counts_uint.parquet",
+    #     ko_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-gene_ko_uint.parquet",
+    # )
 
-    trainer = Trainer(
-        accelerator="gpu", devices=1, fast_dev_run=100, precision="16-mixed"
-    )
+    # trainer = Trainer(
+    #     accelerator="gpu", devices=1, fast_dev_run=100, precision="16-mixed"
+    # )
 
-    trainer.fit(model, datamodule=datamodule)
+    # trainer.fit(model, datamodule=datamodule)
+    pass

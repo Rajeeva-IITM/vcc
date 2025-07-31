@@ -7,7 +7,6 @@ import numpy as np
 import polars as pl
 import polars.selectors as cs
 import rich
-import torch
 from lightning.pytorch import LightningDataModule
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -58,6 +57,7 @@ class VCCDataset(Dataset):
         ko_expression: pl.DataFrame,
         control_expression: pl.DataFrame,
         ko_gene_data: pl.DataFrame,
+        stage: str,
         # dtype: torch.dtype | = torch.float32,
     ) -> None:
         """Dataset for holding the expression to_numpy() and the knockout vector
@@ -70,17 +70,30 @@ class VCCDataset(Dataset):
             Expression of control data (input to the model)
         ko_gene_data : pl.DataFrame
             Binary vector encoding the knocked out gene
+        stage: str | None
+            Indicating whether to initialize the data in predict mode or not
         """
         super().__init__()
 
-        assert (
-            ko_expression.shape[0]
-            == control_expression.shape[0]
-            == ko_gene_data.shape[0]
-        ), (
-            f"Data not of the same length\
+        self.stage = stage
+        match self.stage:
+            case None:
+                raise ValueError("`stage` cannot be None ")
+            case "predict":
+                print("Dataset initialized in prediction mode")
+                assert control_expression.shape[0] == ko_gene_data.shape[0], (
+                    f"Data not of the same length\
+                {control_expression.shape[0], ko_gene_data.shape[0]}"
+                )
+            case _:
+                assert (
+                    ko_expression.shape[0]
+                    == control_expression.shape[0]
+                    == ko_gene_data.shape[0]
+                ), (
+                    f"Data not of the same length\
                 {ko_expression.shape[0], control_expression.shape[0], ko_gene_data.shape[0]}"
-        )
+                )
 
         # print(ko_expression)
         # print(ko_gene_data)
@@ -105,22 +118,27 @@ class VCCDataset(Dataset):
             int: The number of rows in the ko_expression attribute.
         """
 
-        return len(self.ko_expression)
+        return len(self.ko_gene_data)
 
-    def __getitem__(self, index: int) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    def __getitem__(
+        self, index: int
+    ) -> Tuple[Dict[str, np.ndarray], np.ndarray | list]:
         """
         Retrieves a single data sample from the dataset at the specified index.
         Args:
             index (int): Index of the sample to retrieve.
         Returns:
-            Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+            Tuple[Dict[str, np.ndarray], np.ndarray]:
                 A tuple containing a dictionary with knockout gene vector ('ko_vec') and control expression vector ('exp_vec'),
                 and the knockout expression tensor as the target.
         """
 
         ko_input = self.ko_gene_data[index, :].astype(np.float16)
         exp_input = self.control_expression[index, :].astype(np.float16)
-        pred_input = self.ko_expression[index, :].astype(np.float16)
+        if self.stage == "predict":
+            pred_input = []
+        else:
+            pred_input = self.ko_expression[index, :].astype(np.float16)
 
         return {"ko_vec": ko_input, "exp_vec": exp_input}, pred_input
 
@@ -158,8 +176,8 @@ class VCCDataModule(LightningDataModule):
         train_exp_data_path: str | Path,
         train_ko_data_path: str | Path,
         control_data_path: str | Path,
-        test_exp_data_path: str | Path = None,
-        test_ko_data_path: str | Path = None,
+        test_exp_data_path: str | Path | None = None,
+        test_ko_data_path: str | Path | None = None,
         seed: int = 42,
         num_workers: int = 4,
         batch_size: int = 64,
@@ -197,8 +215,8 @@ class VCCDataModule(LightningDataModule):
                     )
 
                 console.log("Reading data")
-                test_exp_data = read_data(self.test_exp_data_path).select(cs.numeric())
-                test_ko_data = read_data(self.test_ko_data_path).select(cs.numeric())
+                test_exp_data = read_data(self.test_exp_data_path).select(cs.numeric())  # type: ignore
+                test_ko_data = read_data(self.test_ko_data_path).select(cs.numeric())  # type: ignore
 
                 control_data = read_data(self.control_data_path)
                 length = test_ko_data.shape[0]  # Number of non control indices
@@ -214,7 +232,9 @@ class VCCDataModule(LightningDataModule):
                         seed=self.seed,
                     )
 
-                self.test_data = VCCDataset(test_exp_data, control_data, test_ko_data)
+                self.test_data = VCCDataset(
+                    test_exp_data, control_data, test_ko_data, stage
+                )
 
                 del control_data, test_ko_data, test_exp_data
                 gc.collect()
@@ -249,7 +269,7 @@ class VCCDataModule(LightningDataModule):
 
                 # Assembling the pieces
                 console.log("Creating Dataset")
-                self.data = VCCDataset(data, control_data, ko_gene_data)
+                self.data = VCCDataset(data, control_data, ko_gene_data, stage)
 
                 console.log("Data splitting")
                 train_index, val_index = train_test_split(
@@ -310,11 +330,19 @@ class VCCDataModule(LightningDataModule):
             self.test_data, batch_size=1, num_workers=self.num_workers, shuffle=False
         )
 
+    def predict_dataloader(self):
+        """Creates and returns the prediction dataloader"""
+        console.log("Creating prediction dataloader")
+        return DataLoader(
+            self.test_data, batch_size=1, num_workers=self.num_workers, shuffle=False
+        )
+
 
 if __name__ == "__main__":
     dm = VCCDataModule(
         train_exp_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-counts_uint.parquet",
         train_ko_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-gene_ko_uint.parquet",
+        control_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/control_data",
         # num_workers=2,
     )
     dm.setup()

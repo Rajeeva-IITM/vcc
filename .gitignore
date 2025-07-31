@@ -2,6 +2,7 @@
 .pixi
 outputs/
 .env
+results/
 
 */lightning_logs/*
 
