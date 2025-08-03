@@ -3,28 +3,32 @@ net:
   _target_: src.models.components.basic_vcc_model.CellModel
   ko_processor_args:
     input_size: 18080
-    hidden_layers: [2048, 1024, 512, 256]
-    output_size: 128
+    hidden_layers: []
+    output_size: 18080
     dropout: 0.0
     activation: relu
+    no_processing: true
   exp_processor_args:
     input_size: 18080
-    hidden_layers: [2048, 1024, 512, 256]
-    output_size: 128
+    hidden_layers: []
+    output_size: 18080
     dropout: 0.0
     activation: relu
+    no_processing: true
   concat_processor_args:
-    input_size: 256 # ${model.net.ko_processor_args.output_size} + ${model.net.exp_processor_args.output_size}
-    hidden_layers: [256,256,256]
-    output_size: 128
+    input_size: 36160 # ${model.net.ko_processor_args.output_size} + ${model.net.exp_processor_args.output_size}
+    hidden_layers: []
+    output_size: 36160
     dropout: 0.0
     activation: relu
+    no_processing: true
   decoder_args:
     input_size: ${model.net.concat_processor_args.output_size}
-    hidden_layers: [256,512,1024,2048]
+    hidden_layers: [2048]
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
-lr: 1e-3
+lr: 1e-5
 max_lr: 1e-2
 weight_decay: 1e-5
+composite_loss_lambda: 1

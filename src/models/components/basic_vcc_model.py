@@ -1,5 +1,3 @@
-from typing import Dict, List
-
 import torch
 from torch import nn
 
@@ -29,18 +27,21 @@ class ProcessingNN(
         Dropout value
     activation : str | nn.Module
         Activation function
+    no_processing: bool, defaults to False
+        Flag to indicate if one wants this component to do nothing
     """
 
     def __init__(
         self,
         input_size: int,
-        hidden_layers: List[int],
+        hidden_layers: list[int],
         output_size: int,
         dropout: float,
         activation: str | nn.Module,
+        no_processing: bool = False,
     ):
-        if len(hidden_layers) < 1:
-            raise ValueError("Number of layers must be greater than 1.")
+        # if len(hidden_layers) < 1:
+        #     raise ValueError("Number of layers must be greater than 1.")
 
         if dropout < 0 or dropout > 1:
             raise ValueError("Dropout must be between 0 and 1.")
@@ -61,17 +62,32 @@ class ProcessingNN(
         self.layers = [self.input_size] + self.hidden_layers + [self.output_size]  # type: ignore
         self.sequence = []  # Sequence of layers
 
-        for i in range(len(self.layers) - 2):
-            self.sequence.append(
-                nn.Linear(self.layers[i], self.layers[i + 1], dtype=torch.float)
-            )
-            self.sequence.append(nn.BatchNorm1d(self.layers[i + 1], dtype=torch.float))
-            self.sequence.append(self.activation)
+        if no_processing:
+            self.sequence.append(nn.Identity())
 
-        self.sequence.append(nn.Dropout(self.dropout))
-        self.sequence.append(
-            nn.Linear(self.layers[-2], self.layers[-1], dtype=torch.float)
-        )
+        else:
+            if len(self.layers) == 2:
+                # No hidden layers: just input -> output
+                self.sequence.append(
+                    nn.Linear(self.layers[0], self.layers[1], dtype=torch.float)
+                )
+                self.sequence.append(self.activation)
+            else:
+                for i in range(len(self.layers) - 2):
+                    self.sequence.append(
+                        nn.Linear(self.layers[i], self.layers[i + 1], dtype=torch.float)
+                    )
+                    self.sequence.append(
+                        nn.BatchNorm1d(self.layers[i + 1], dtype=torch.float)
+                    )
+                    self.sequence.append(self.activation)
+
+                self.sequence.append(nn.Dropout(self.dropout))
+                self.sequence.append(
+                    nn.Linear(self.layers[-2], self.layers[-1], dtype=torch.float)
+                )
+                73
+
         self.sequence = nn.Sequential(*self.sequence)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -108,16 +124,16 @@ class CellModel(nn.Module):
     ):
         # TODO: Need to complete input verification code
 
-        assert (
-            concat_processor_args["input_size"]
-            == ko_processor_args["output_size"] + exp_processor_args["output_size"]
-        ), (
-            "Mismatch in size between concatenated vector and input of concatenated processor"
-        )
+        # assert (
+        #     concat_processor_args["input_size"]
+        #     == ko_processor_args["output_size"] + exp_processor_args["output_size"]
+        # ), (
+        #     "Mismatch in size between concatenated vector and input of concatenated processor"
+        # )
 
-        assert concat_processor_args["output_size"] == decoder_args["input_size"], (
-            "Encoder output size should be the same as the decoder input size"
-        )
+        # assert concat_processor_args["output_size"] == decoder_args["input_size"], (
+        #     "Encoder output size should be the same as the decoder input size"
+        # )
 
         super().__init__()
 
@@ -126,7 +142,7 @@ class CellModel(nn.Module):
         self.concat_processor = ProcessingNN(**concat_processor_args)
         self.decoder = ProcessingNN(**decoder_args)
 
-    def forward(self, inputs: Dict[str, torch.Tensor]):
+    def forward(self, inputs: dict[str, torch.Tensor]):
         """
         Performs a forward pass through the model using the provided input tensors.
         Args:
@@ -159,6 +175,7 @@ if __name__ == "__main__":
         "output_size": 4,
         "dropout": 0.2,
         "activation": "relu",
+        "no_processing": True,
     }
     exp_processor_args = {
         "input_size": 12,
@@ -166,20 +183,23 @@ if __name__ == "__main__":
         "output_size": 4,
         "dropout": 0.2,
         "activation": "relu",
+        "no_processing": True,
     }
     concat_processor_args = {
-        "input_size": 8,  # 4 + 4 from previous outputs
+        "input_size": 22,  # 4 + 4 from previous outputs
         "hidden_layers": [8],
         "output_size": 6,
         "dropout": 0.2,
         "activation": "relu",
+        "no_processing": True,
     }
     decoder_args = {
-        "input_size": 6,
+        "input_size": 22,
         "hidden_layers": [6],
         "output_size": 2,
         "dropout": 0.2,
         "activation": "relu",
+        "no_processing": True,
     }
 
     # Instantiate the model

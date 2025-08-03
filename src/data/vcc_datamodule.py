@@ -8,8 +8,10 @@ import polars as pl
 import polars.selectors as cs
 import rich
 from lightning.pytorch import LightningDataModule
-from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, Subset
+
+# from sklearn.model_selection import train_test_split
+from src.utils.gene_train_test_split import gene_train_test_split, get_gene_names
 
 console = rich.console.Console()
 
@@ -57,7 +59,7 @@ class VCCDataset(Dataset):
         ko_expression: pl.DataFrame,
         control_expression: pl.DataFrame,
         ko_gene_data: pl.DataFrame,
-        stage: str,
+        stage: str | None,
         # dtype: torch.dtype | = torch.float32,
     ) -> None:
         """Dataset for holding the expression to_numpy() and the knockout vector
@@ -272,10 +274,13 @@ class VCCDataModule(LightningDataModule):
                 self.data = VCCDataset(data, control_data, ko_gene_data, stage)
 
                 console.log("Data splitting")
-                train_index, val_index = train_test_split(
-                    list(range(length)),  # type: ignore
+
+                gene_names = get_gene_names(ko_gene_data)
+
+                train_index, val_index = gene_train_test_split(
+                    gene_names,  # type: ignore
                     test_size=self.test_size,
-                    random_state=self.seed,
+                    seed=self.seed,
                 )
 
                 console.log("Split data generation")
@@ -340,12 +345,12 @@ class VCCDataModule(LightningDataModule):
 
 if __name__ == "__main__":
     dm = VCCDataModule(
-        train_exp_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-counts_uint.parquet",
-        train_ko_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/training_data-gene_ko_uint.parquet",
-        control_data_path="/storage/bt20d204/vcc-data/vcc_data/processed-data/control_data",
+        train_exp_data_path="/storage/bt20d204/vcc-data/processed-data/training_data-counts_uint.parquet",
+        train_ko_data_path="/storage/bt20d204/vcc-data/processed-data/training_data-gene_ko_uint.parquet",
+        control_data_path="/storage/bt20d204/vcc-data/processed-data/control_exp_data_uint.parquet",
         # num_workers=2,
     )
-    dm.setup()
+    dm.setup(stage="fit")
 
     for X, y in dm.val_dataloader():
         print(len(X), y.shape)

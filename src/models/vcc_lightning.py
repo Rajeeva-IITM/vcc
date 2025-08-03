@@ -7,56 +7,7 @@ from torch import nn
 
 # from icecream import ic
 from src.models.components.basic_vcc_model import CellModel
-
-
-class CompositeLoss(nn.Module):
-    """CompositeLoss combines Mean Absolute Error (MAE) and Pearson correlation coefficient losses
-    into a single loss function for regression tasks.
-
-    Arguments
-    ---------
-    lambda_mae : float
-        Weight for the MAE loss component.
-    lambda_mse : float
-        Weight for the correlation loss component.
-
-    Attributes
-    -----------
-    lambda_val : float
-        Weight for the MAE loss.
-
-    Methods
-    -------
-    forward(y_pred, y_true)
-        Computes the weighted sum of MAE and (1 - Pearson correlation coefficient) as the loss.
-    """
-
-    def __init__(self, lambda_val: float) -> None:
-        super(CompositeLoss, self).__init__()
-
-        assert 0 <= lambda_val <= 1, "lambda value must be between 0 and 1"
-
-        self.lambda_val = lambda_val
-        # self.mae_loss = torchmetrics.MeanAbsoluteError()
-
-    def forward(self, y_pred, y_true):
-        """
-        Computes a custom loss as a weighted sum of MAE loss and (1 - Pearson correlation coefficient).
-        Args:
-            y_pred (Tensor): Predicted values.
-            y_true (Tensor): Ground truth values.
-        Returns:
-            Tensor: Computed loss value.
-        """
-
-        mae = torchmetrics.functional.mean_absolute_error(y_true, y_pred)
-        cosine = torchmetrics.functional.cosine_similarity(
-            y_true, y_pred, reduction="mean"
-        )
-
-        loss = self.lambda_val * mae + (1 - self.lambda_val) * (1 - cosine)
-
-        return loss
+from src.models.components.loss_functions import CompositeLoss
 
 
 class VCCModule(LightningModule):
@@ -83,14 +34,19 @@ class VCCModule(LightningModule):
     """
 
     def __init__(
-        self, net: CellModel | nn.Module, lr: float, max_lr: float, weight_decay: float
+        self,
+        net: CellModel | nn.Module,
+        lr: float,
+        max_lr: float,
+        weight_decay: float,
+        composite_loss_lambda: float,
     ) -> None:
         super().__init__()
 
         self.save_hyperparameters(logger=False, ignore=["net"])
 
         self.net = net
-        self.criterion = CompositeLoss(0.5)
+        self.criterion = CompositeLoss(composite_loss_lambda)
         self.lr = lr
         self.max_lr = max_lr
         self.weight_decay = weight_decay
