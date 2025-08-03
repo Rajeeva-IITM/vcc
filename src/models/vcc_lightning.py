@@ -7,16 +7,18 @@ from torch import nn
 
 # from icecream import ic
 from src.models.components.basic_vcc_model import CellModel
-from src.models.components.loss_functions import CompositeLoss
+
+# from src.models.components.loss_functions import CompositeLoss
 
 
 class VCCModule(LightningModule):
     """
     PyTorch Lightning module for training, validating, and testing a cell model with composite loss and multiple regression metrics.
         net (CellModel | nn.Module): The neural network model to be trained.
-        lr (float): Initial learning rate for the optimizer.
-        max_lr (float): Maximum learning rate for the OneCycleLR scheduler.
-        weight_decay (float): Weight decay (L2 regularization) for the optimizer.
+        loss_fn (nn.Module): Loss function to be optimized
+        optimizer (torch.optim.Optimizer): Optimizer
+        scheduler (torch.optim.lr_scheduler.LRScheduler): Learning Rate Scheduler
+
 
     Attributes:
         net (CellModel): The neural network model.
@@ -36,20 +38,22 @@ class VCCModule(LightningModule):
     def __init__(
         self,
         net: CellModel | nn.Module,
-        lr: float,
-        max_lr: float,
-        weight_decay: float,
-        composite_loss_lambda: float,
+        # lr: float,
+        # max_lr: float,
+        # weight_decay: float,
+        loss_fn: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler.LRScheduler,
     ) -> None:
         super().__init__()
 
         self.save_hyperparameters(logger=False, ignore=["net"])
 
         self.net = net
-        self.criterion = CompositeLoss(composite_loss_lambda)
-        self.lr = lr
-        self.max_lr = max_lr
-        self.weight_decay = weight_decay
+        self.criterion = loss_fn
+        # self.lr = lr
+        # self.max_lr = max_lr
+        # self.weight_decay = weight_decay
 
         self.train_mae = torchmetrics.MeanAbsoluteError()
         # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
@@ -83,24 +87,36 @@ class VCCModule(LightningModule):
     #         }
     #     return {"optimizer": optimizer}
 
+    # def configure_optimizers(self):
+    #     """Returns the configured optimizers and schedulers for training the model.
+
+    #     Returns:
+    #         Tuple[List[torch.optim.Optimizer], List[torch.optim.lr_scheduler._LRScheduler]]: A tuple containing the configured optimizers and schedulers.
+    #     """
+    #     optimizer = torch.optim.AdamW(
+    #         self.parameters(),
+    #         lr=self.lr,
+    #         weight_decay=self.weight_decay,
+    #     )
+    #     scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    #         optimizer,
+    #         max_lr=self.max_lr,
+    #         total_steps=self.trainer.estimated_stepping_batches,
+    #     )
+
+    #     return [optimizer], [scheduler]
+    #
+
     def configure_optimizers(self):
-        """Returns the configured optimizers and schedulers for training the model.
+        """Configuring the optimizers."""
 
-        Returns:
-            Tuple[List[torch.optim.Optimizer], List[torch.optim.lr_scheduler._LRScheduler]]: A tuple containing the configured optimizers and schedulers.
-        """
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.lr,
-            weight_decay=self.weight_decay,
-        )
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=self.max_lr,
-            total_steps=self.trainer.estimated_stepping_batches,
+        optimizer: torch.optim.Optimizer = self.hparams["optimizer"](self.parameters())
+
+        scheduler: torch.optim.lr_scheduler.LRScheduler = self.hparams["scheduler"](
+            optimizer, total_steps=self.trainer.estimated_stepping_batches
         )
 
-        return [optimizer], [scheduler]
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def forward(self, X):
         """

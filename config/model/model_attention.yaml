@@ -4,27 +4,40 @@ net:
   ko_processor_args:
     input_size: 18080
     hidden_layers: [2048,1024,512]
-    output_size: 128
+    output_size: 256
     dropout: 0.0
     activation: relu
     # no_processing: true
   exp_processor_args:
     input_size: 18080
     hidden_layers: [2048,1024,512]
-    output_size: 128
+    output_size: 256
     dropout: 0.0
     activation: relu
     # no_processing: true
   attention_args:
-    embed_dim: 128 # Must be same as the dimensions of you key and value if you choose so
+    embed_dim: 256 # Must be same as the dimensions of you key and value if you choose so
     num_heads: 1
   decoder_args:
-    input_size: 128
-    hidden_layers: [256,512,1024,2048]
+    input_size: 256
+    hidden_layers: [512,1024,2048]
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
-lr: 1e-5
-max_lr: 1e-2
-weight_decay: 1e-5
-composite_loss_lambda: 1
+loss_fn:
+  _target_: src.models.components.loss_functions.WeightedMAELoss
+  num_genes: ${model.net.decoder_args.output_size} # Should be the same as number of features
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-5
+  weight_decay: 1e-5
+scheduler:
+  _target_: torch.optim.lr_scheduler.OneCycleLR
+  _partial_: true
+  max_lr: 1e-2
+
+# lr: 1e-5
+# max_lr: 1e-2
+# weight_decay: 1e-5
+# composite_loss_lambda: 1
