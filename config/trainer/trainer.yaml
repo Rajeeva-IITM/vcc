@@ -1,5 +1,5 @@
 _target_: lightning.pytorch.trainer.trainer.Trainer
-precision: 16-mixed
+precision: bf16-mixed
 accelerator: gpu
 devices: [0]
 max_epochs: 100

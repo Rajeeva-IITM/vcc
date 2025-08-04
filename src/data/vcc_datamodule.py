@@ -1,7 +1,7 @@
 import gc
 import warnings
 from pathlib import Path
-from typing import Dict, Tuple, Union
+from typing import Union
 
 import numpy as np
 import polars as pl
@@ -124,7 +124,7 @@ class VCCDataset(Dataset):
 
     def __getitem__(
         self, index: int
-    ) -> Tuple[Dict[str, np.ndarray], np.ndarray | list]:
+    ) -> tuple[dict[str, np.ndarray], np.ndarray | list]:
         """
         Retrieves a single data sample from the dataset at the specified index.
         Args:
