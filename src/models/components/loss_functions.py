@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-import torchmetrics
+
+# import torchmetrics
 
 
 class WeightedMAELoss(nn.Module):
@@ -52,38 +53,42 @@ class WeightedMAELoss(nn.Module):
 
 
 class CompositeLoss(nn.Module):
-    """CompositeLoss combines Mean Absolute Error (MAE) and Cosine losses
-    into a single loss function for regression tasks.
+    """CompositeLoss combines multiple losses in a weighted fashion
 
     Arguments
     ---------
-    lambda_mae : float
-        Weight for the MAE loss component.
-    lambda_mse : float
-        Weight for the cosine loss component.
+    loss_functions: List[nn.Module]
+        List of loss functions (must have the `forward` method implemented)
+    weights:
+        Weights to be given to each loss function
 
     Attributes
     -----------
-    lambda_val : float
-        Weight for the losses.
+    loss_functions: list[nn.Module]
+        List of individual losses
+    weights: list[int | float]
+
 
     Methods
     -------
     forward(y_pred, y_true)
-        Computes the weighted sum of MAE and (1 - Pearson cosine coefficient) as the loss.
+        Computes the weighted sum of individual losses.
     """
 
-    def __init__(self, lambda_val: float) -> None:
+    def __init__(
+        self, loss_functions: list[nn.Module], weights: list[int | float]
+    ) -> None:
         super(CompositeLoss, self).__init__()
 
-        assert 0 <= lambda_val <= 1, "lambda value must be between 0 and 1"
-
-        self.lambda_val = lambda_val
-        # self.mae_loss = torchmetrics.MeanAbsoluteError()
+        assert len(loss_functions) == len(weights), (
+            "Number of weights must be equal to the number of loss functions provided"
+        )
+        self.loss_functions = loss_functions
+        self.weights = weights
 
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
         """
-        Computes a custom loss as a weighted sum of MAE loss and (1 - Pearson correlation coefficient).
+        Computes a custom loss as a weighted sum of the constituent losses.
         Args:
             y_pred (Tensor): Predicted values.
             y_true (Tensor): Ground truth values.
@@ -91,11 +96,22 @@ class CompositeLoss(nn.Module):
             Tensor: Computed loss value.
         """
 
-        mae = torchmetrics.functional.mean_absolute_error(y_true, y_pred)
-        cosine = torchmetrics.functional.cosine_similarity(
-            y_true, y_pred, reduction="mean"
-        )
+        final_loss = 0
 
-        loss = self.lambda_val * mae + (1 - self.lambda_val) * (1 - cosine)
+        for loss_function, weight in zip(self.loss_functions, self.weights):
+            final_loss += weight * loss_function.forward(y_pred, y_true)
 
-        return loss
+        return final_loss
+
+
+if __name__ == "__main__":
+    # Verifying composite loss
+
+    loss_fn = CompositeLoss([torch.nn.L1Loss(), WeightedMAELoss(10)], [1, 2])
+
+    preds = torch.randn(5, 10)
+    truths = torch.randn(5, 10)
+
+    loss = loss_fn.forward(preds, truths)
+
+    print(f"Loss: {loss:.5f}")

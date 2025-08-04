@@ -16,7 +16,7 @@ net:
     activation: relu
     # no_processing: true
   attention_args:
-    embed_dim: 256 # Must be same as the dimensions of you key and value if you choose so
+    embed_dim: 256 # Must be same as the dimensions of your key and value
     num_heads: 1
   decoder_args:
     input_size: 256

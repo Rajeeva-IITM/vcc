@@ -6,6 +6,13 @@ from src.models.components.basic_vcc_model import ProcessingNN
 
 
 class CellModelAttention(nn.Module):
+    """
+    Virtual Cell Model
+    Model that takes in two inputs (control gene expression and gene knockout status ) and processes them individually and returns their vectors.
+    The vectors are then fused and then processed by an attention module, the attention output is processed by a decoder
+    to predict the perturbed gene expression
+    """
+
     def __init__(
         self,
         ko_processor_args: dict,
@@ -23,7 +30,7 @@ class CellModelAttention(nn.Module):
         self.exp_processor = ProcessingNN(**exp_processor_args)
         # self.concat_processor = ProcessingNN(**concat_processor_args)
         self.decoder = ProcessingNN(**decoder_args)
-        self.cross_attn = MultiheadAttention(**attention_args)
+        self.attention = MultiheadAttention(**attention_args)
 
     def forward(self, inputs: dict[str, torch.Tensor]):
         """
@@ -40,12 +47,18 @@ class CellModelAttention(nn.Module):
         ko_processed = self.ko_processor.forward(ko_vec)
         exp_processed = self.exp_processor.forward(exp_vec)
 
+        # Fusing the two representations
+
+        fused_representaion = (
+            ko_processed * exp_processed
+        )  # Ensure they are of same size
+
         # Moving onto the attention module
 
-        attn_output, _ = self.cross_attn.forward(
-            query=exp_processed.unsqueeze(0),
-            key=ko_processed.unsqueeze(0),
-            value=ko_processed.unsqueeze(0),
+        attn_output, _ = self.attention.forward(
+            query=fused_representaion.unsqueeze(0),
+            key=fused_representaion.unsqueeze(0),
+            value=fused_representaion.unsqueeze(0),
         )  # discarding weights
 
         output = self.decoder.forward(attn_output.squeeze(0))
