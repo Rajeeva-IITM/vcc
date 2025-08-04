@@ -5,7 +5,7 @@ import rootutils
 import torch
 import wandb
 from lightning import LightningDataModule, LightningModule
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
 torch.cuda.empty_cache()
@@ -38,6 +38,7 @@ def main(conf: DictConfig):
     console.log(f"Instantiating Logger: {conf.logging.wandb._target_}")
 
     logger = hydra.utils.instantiate(conf.logging.wandb)
+    logger.experiment.config.update(OmegaConf.to_container(conf))
 
     console.log(f"Instantiating Trainer: {conf.trainer._target_}")
 

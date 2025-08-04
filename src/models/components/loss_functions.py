@@ -39,10 +39,9 @@ class WeightedMAELoss(nn.Module):
 
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
         abs_error = torch.abs(y_true - y_pred)
-        # Normalizing weights to the range of 0 to 1
-        # positive_weights = (self.weights - self.weights.min()) / (self.weights.max() - self.weights.min())
-
-        positive_weights = torch.nn.functional.softplus(self.weights)
+        # Ensure weights are on the same device as y_pred
+        weights = self.weights.to(y_pred.device)
+        positive_weights = torch.nn.functional.softplus(weights)
 
         weighted_error = abs_error * positive_weights.unsqueeze(
             0
