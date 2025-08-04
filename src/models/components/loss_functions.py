@@ -4,6 +4,51 @@ import torch.nn as nn
 # import torchmetrics
 
 
+class MSLE(nn.Module):
+    """
+    Mean Squared Logarithmic Error (MSLE) loss module.
+
+    This loss function computes the mean squared logarithmic error between the predicted and true values.
+    It is particularly useful when targets can span several orders of magnitude and penalizes underestimates more than overestimates.
+
+    Args:
+        reduction (str, optional): Specifies the reduction to apply to the output:
+            'mean' | 'sum' | None. 'mean': the sum of the output will be divided by the number of elements in the output.
+            'sum': the output will be summed. None: no reduction will be applied. Default: 'mean'.
+
+    Shape:
+        - y_pred: (N, *) where * means any number of additional dimensions
+        - y_true: (N, *), same shape as y_pred
+
+    Returns:
+        torch.Tensor: The calculated MSLE loss. If reduction is 'none', returns the unreduced loss with the same shape as input.
+        Otherwise, returns a scalar.
+
+    Example:
+        >>> criterion = MSLE(reduction='mean')
+        >>> y_pred = torch.tensor([2.5, 0.0, 2.0, 7.0])
+        >>> y_true = torch.tensor([3.0, 0.0, 2.0, 8.0])
+        >>> loss = criterion(y_pred, y_true)
+
+    Mean Squared Log Error loss.
+    """
+
+    def __init__(self, reduction: str | None = "mean") -> None:
+        super(MSLE, self).__init__()
+
+        self.reduction = reduction
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
+        calc = (torch.log1p(y_true) - torch.log1p(y_pred)) ** 2
+
+        if self.reduction == "sum":
+            return calc.sum()
+        elif self.reduction == "mean":
+            return calc.mean()
+        else:
+            return calc
+
+
 class WeightedMAELoss(nn.Module):
     """
     A weighted MAE loss. The weights are learned by the model to prioritize specific genes

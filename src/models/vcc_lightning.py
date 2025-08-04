@@ -58,14 +58,17 @@ class VCCModule(LightningModule):
         self.train_mae = torchmetrics.MeanAbsoluteError()
         # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.train_mse = torchmetrics.MeanSquaredError()
+        # self.train_corr = torchmetrics.SpearmanCorrCoef()
 
         self.val_mae = torchmetrics.MeanAbsoluteError()
         # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.val_mse = torchmetrics.MeanSquaredError()
+        # self.val_corr = torchmetrics.SpearmanCorrCoef()
 
         self.test_mae = torchmetrics.MeanAbsoluteError()
         # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.test_mse = torchmetrics.MeanSquaredError()
+        # self.test_corr = torchmetrics.SpearmanCorrCoef()
 
     # def configure_optimizers(self) -> Dict[str, Any]:
     #     """Choose what optimizers and learning-rate schedulers to use in your optimization.
@@ -146,6 +149,12 @@ class VCCModule(LightningModule):
         )
         self.train_mse.update(y_pred, y)
 
+        # self.train_corr.update(y_pred.T, y.T)
+
+        corr = torchmetrics.functional.spearman_corrcoef(
+            y_pred.T, y.T
+        ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
+
         self.log(
             "train/loss", loss, on_epoch=True, on_step=True, prog_bar=True, logger=True
         )
@@ -174,6 +183,9 @@ class VCCModule(LightningModule):
             prog_bar=True,
             logger=True,
         )
+        self.log(
+            "train/corr", corr, on_epoch=True, on_step=True, prog_bar=True, logger=True
+        )
 
         return loss
 
@@ -190,6 +202,11 @@ class VCCModule(LightningModule):
             y_pred, y, reduction="mean"
         )
         self.val_mse.update(y_pred, y)
+        # self.val_corr.update(y_pred.T, y.T)
+        # corr = self.val_corr.compute() # Only creates an approximation but this accumulates in the gpu if left uncomputed
+        corr = torchmetrics.functional.spearman_corrcoef(
+            y_pred.T, y.T
+        ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
 
         self.log(
             "val/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
@@ -219,6 +236,14 @@ class VCCModule(LightningModule):
             prog_bar=True,
             logger=True,
         )
+        self.log(
+            "val/corr",
+            corr,
+            on_epoch=True,
+            on_step=False,
+            prog_bar=True,
+            logger=True,
+        )
 
         return loss
 
@@ -234,7 +259,11 @@ class VCCModule(LightningModule):
         self.test_cosine = torchmetrics.functional.cosine_similarity(
             y_pred, y, reduction="mean"
         )
-        self.test_mse.update(y_pred, y)
+        # self.test_mse.update(y_pred, y)
+        # self.val_corr.update(y_pred.T, y.T)
+        corr = torchmetrics.functional.spearman_corrcoef(
+            y_pred.T, y.T
+        ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
 
         self.log(
             "test/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
@@ -259,6 +288,14 @@ class VCCModule(LightningModule):
         self.log(
             "test/mse",
             self.test_mse,
+            on_epoch=True,
+            on_step=False,
+            prog_bar=True,
+            logger=True,
+        )
+        self.log(
+            "test/corr",
+            corr,
             on_epoch=True,
             on_step=False,
             prog_bar=True,

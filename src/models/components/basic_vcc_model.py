@@ -86,7 +86,7 @@ class ProcessingNN(
                 self.sequence.append(
                     nn.Linear(self.layers[-2], self.layers[-1], dtype=torch.float)
                 )
-                73
+                self.sequence.append(self.activation)
 
         self.sequence = nn.Sequential(*self.sequence)
 
