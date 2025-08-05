@@ -1,7 +1,6 @@
 import gc
 import warnings
 from pathlib import Path
-from typing import Union
 
 import numpy as np
 import polars as pl
@@ -10,47 +9,12 @@ import rich
 from lightning.pytorch import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
+from src.utils.data import read_data
+
 # from sklearn.model_selection import train_test_split
 from src.utils.gene_train_test_split import gene_train_test_split, get_gene_names
 
 console = rich.console.Console()
-
-
-def read_data(path: Union[Path, str], format: str | None = None) -> pl.DataFrame:
-    """Reads the data from the given path.
-
-    Args:
-        path (Union[Path, str]): The path to the observation data.
-        format (str, optional): The format of the data. Defaults to "parquet".
-
-    Returns:
-        pl.DataFrame: The data read from the path.
-    """
-
-    if format is None:
-        path = str(path)
-        if path.endswith(".feather"):
-            format = "feather"
-        elif path.endswith(".parquet"):
-            format = "parquet"
-        elif path.endswith(".csv"):
-            format = "csv"
-        else:
-            raise ValueError(
-                "Could not infer file format from extension. Please specify the format."
-            )
-
-    match format:
-        case "feather":
-            return pl.read_feather(path)
-        case "parquet":
-            return pl.read_parquet(path)
-        case "csv":
-            return pl.read_csv(path)
-        case _:
-            raise NotImplementedError(
-                "File format not supported. Most be one of 'feather', 'parquet', 'csv'"
-            )
 
 
 class VCCDataset(Dataset):

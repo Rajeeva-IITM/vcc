@@ -27,7 +27,9 @@ def get_gene_names(ko_data: pl.DataFrame):
 
 
 def gene_train_test_split(
-    gene_names: list[str], test_size: float, seed: int | np.random.RandomState | None
+    gene_names: list[str] | np.ndarray,
+    test_size: float,
+    seed: int | np.random.RandomState | None,
 ):
     assert 0 < test_size < 1, "test size must be between 0 and 1"
 
