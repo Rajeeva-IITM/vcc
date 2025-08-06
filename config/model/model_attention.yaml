@@ -2,8 +2,8 @@ _target_: src.models.vcc_lightning.VCCModule
 net:
   _target_: src.models.components.vcc_model_attention.CellModelAttention
   ko_processor_args:
-    input_size: 18080
-    hidden_layers: [2048,1024,512]
+    input_size: 512
+    hidden_layers: []
     output_size: 256
     dropout: 0.0
     activation: relu
