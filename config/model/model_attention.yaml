@@ -24,6 +24,7 @@ net:
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
+  fusion_type: 'cross_attn'
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:

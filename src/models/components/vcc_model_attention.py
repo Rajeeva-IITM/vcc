@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
 from torch.nn import MultiheadAttention
@@ -20,6 +22,7 @@ class CellModelAttention(nn.Module):
         # concat_processor_args: dict,
         decoder_args: dict,
         attention_args: dict,
+        fusion_type: Literal["sum", "product", "cross_attn", "bilinear"],
         # query: str = "ko_exp" #TODO: Must be able to change what is used as keys and values
     ):
         super().__init__()
@@ -31,6 +34,7 @@ class CellModelAttention(nn.Module):
         # self.concat_processor = ProcessingNN(**concat_processor_args)
         self.decoder = ProcessingNN(**decoder_args)
         self.attention = MultiheadAttention(**attention_args)
+        self.fusion = fusion_type
 
     def forward(self, inputs: dict[str, torch.Tensor]):
         """
@@ -49,16 +53,40 @@ class CellModelAttention(nn.Module):
 
         # Fusing the two representations
 
-        fused_representaion = (
-            ko_processed * exp_processed
-        )  # Ensure they are of same size
+        match self.fusion:
+            case "sum":
+                fused_representaion = (
+                    ko_processed + exp_processed
+                )  # Ensure they are of same size
+                query = fused_representaion.unsqueeze(0)
+                key = fused_representaion.unsqueeze(0)
+                value = fused_representaion.unsqueeze(0)
+            case "prodcut":
+                fused_representaion = (
+                    ko_processed * exp_processed
+                )  # Ensure they are of same size
+                query = fused_representaion.unsqueeze(0)
+                key = fused_representaion.unsqueeze(0)
+                value = fused_representaion.unsqueeze(0)
+            case "cross_attn":
+                query = ko_processed.unsqueeze(0)
+                key = exp_processed.unsqueeze(0)
+                value = exp_processed.unsqueeze(0)
+            case "bilinear":
+                query = ko_processed.unsqueeze(0)
+                key = exp_processed.unsqueeze(0)
+                value = exp_processed.unsqueeze(0)
+            case _:
+                raise ValueError(
+                    "fusion_type should be one of ['sum','product','cross_attn']"
+                )
 
         # Moving onto the attention module
 
         attn_output, _ = self.attention.forward(
-            query=fused_representaion.unsqueeze(0),
-            key=fused_representaion.unsqueeze(0),
-            value=fused_representaion.unsqueeze(0),
+            query=query,
+            key=key,
+            value=value,
         )  # discarding weights
 
         output = self.decoder.forward(attn_output.squeeze(0))
@@ -101,6 +129,7 @@ if __name__ == "__main__":
         exp_processor_args=exp_processor_args,
         attention_args=attention_args,
         decoder_args=decoder_args,
+        fusion_type="sum",
     )
 
     # Create dummy input tensors
