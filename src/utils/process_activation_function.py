@@ -27,9 +27,13 @@ def get_activation(name: str):
             return nn.CELU()
         case "gelu":
             return nn.GELU()
+        case "silu":
+            return nn.SiLU()
+        case "softplus":
+            return nn.Softplus()
         case _:
             warnings.warn(
-                """String doesn't match one of ['relu','tanh','sigmoid','celu','gelu'].
+                """String doesn't match any of the cases.
                 Proceeding with default Relu"""
             )
             return nn.ReLU()

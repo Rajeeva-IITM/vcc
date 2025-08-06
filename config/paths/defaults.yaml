@@ -4,6 +4,6 @@ root_dir: ${oc.env:PROJECT}
 
 data_dir: ${oc.env:DATA_DIR}
 
-log_dir: ${oc.env:RUN_DIR}
+log_dir: ${oc.env:LOG_DIR}
 
 output_dir: ${oc.env:RUN_DIR}

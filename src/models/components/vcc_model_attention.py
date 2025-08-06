@@ -61,7 +61,7 @@ class CellModelAttention(nn.Module):
                 query = fused_representaion.unsqueeze(0)
                 key = fused_representaion.unsqueeze(0)
                 value = fused_representaion.unsqueeze(0)
-            case "prodcut":
+            case "product":
                 fused_representaion = (
                     ko_processed * exp_processed
                 )  # Ensure they are of same size

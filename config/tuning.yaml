@@ -1,6 +1,6 @@
 defaults:
   - trainer: trainer
-  - callbacks: defaults
+  - callbacks: callbacks_for_tuning
   - paths: defaults
   - data: dataset
   - model: model
@@ -8,11 +8,12 @@ defaults:
 
 savename: tuning_${now:%d_%m_%Y}
 
+
 trainer:
   # logger: false
   enable_checkpointing: false
-  enable_progress_bar: false
-  enable_model_summary: false
+  # enable_progress_bar: false
+  # enable_model_summary: false
   max_epochs: 50
   default_root_dir: ${paths.log_dir}${data.metadata.groupname}/
 

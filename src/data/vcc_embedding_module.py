@@ -269,7 +269,6 @@ class VCCDataModule(LightningDataModule):
                 console.log("Data splitting")
 
                 gene_names = ko_gene_data.flatten()
-                ic(gene_names)
 
                 train_index, val_index = gene_train_test_split(
                     gene_names,  # type: ignore

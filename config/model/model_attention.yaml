@@ -26,13 +26,7 @@ net:
     activation: relu
   fusion_type: 'cross_attn'
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
-  loss_functions:
-    - _target_: src.models.components.loss_functions.MSLE
-    - _target_: torch.nn.MSELoss
-  weights:
-    - 0.5
-    - 0.5
+  _target_: src.models.components.loss_functions.LogCoshError
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true

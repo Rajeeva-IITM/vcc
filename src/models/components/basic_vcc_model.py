@@ -71,16 +71,16 @@ class ProcessingNN(
                 self.sequence.append(
                     nn.Linear(self.layers[0], self.layers[1], dtype=torch.float)
                 )
-                self.sequence.append(nn.BatchNorm1d(self.layers[1]))
+                # self.sequence.append(nn.LayerNorm(self.layers[1]))
                 self.sequence.append(self.activation)
             else:
                 for i in range(len(self.layers) - 2):
                     self.sequence.append(
                         nn.Linear(self.layers[i], self.layers[i + 1], dtype=torch.float)
                     )
-                    self.sequence.append(
-                        nn.BatchNorm1d(self.layers[i + 1], dtype=torch.float)
-                    )
+                    # self.sequence.append(
+                    #     nn.LayerNorm(self.layers[i + 1], dtype=torch.float)
+                    # )
                     self.sequence.append(self.activation)
 
                 self.sequence.append(nn.Dropout(self.dropout))

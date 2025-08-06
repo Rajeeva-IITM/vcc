@@ -1,0 +1,38 @@
+defaults:
+  - data: dataset_embedding
+  - model: model_attention
+  - trainer: trainer
+  - callbacks: callbacks_for_tune
+  - paths: defaults
+  # - logging: wandb
+  # - hydra: defaults
+  - _self_
+
+seed: null
+
+trainer:
+  # logger: false
+  max_epochs: 60
+  enable_checkpointing: false
+  # enable_progress_bar: false
+  # enable_model_summary: false
+
+logging:
+  wandb:
+    job_type: VCC
+
+# callbacks:
+#   - rich_progress_bar
+
+optuna:
+  objective: val/loss
+  n_jobs: 1
+  n_trials: 200
+  direction: minimize
+
+  sampler:
+    _target_: optuna.samplers.TPESampler
+
+  storage:
+    _target_: optuna.storages.journal.JournalFileBackend
+    file_path: ${paths.output_dir}/${data.metadata.groupname}.log
