@@ -194,11 +194,14 @@ class VCCDataModule(LightningDataModule):
 
                 console.log("Reading data")
                 # test_exp_data = read_data(self.test_exp_data_path).select(cs.numeric())  # type: ignore
-                test_ko_data = read_data(self.test_ko_data_path)[
-                    "target_gene"
-                ].to_numpy()  # type: ignore
+                # Pass in file similar pert Validation Counts
+                test_ko_data = read_data(self.test_ko_data_path)
+                perturbed_genes = np.repeat(
+                    test_ko_data["target_gene"].to_numpy().flatten(),
+                    repeats=test_ko_data["n_cells"].to_numpy().flatten(),
+                )
 
-                length = len(test_ko_data)  # Number of non control indices
+                length = len(perturbed_genes)  # Number of non control indices
 
                 # Since number of control data points is smaller, sampling with replacement
                 if control_data.shape[0] < length:
@@ -213,7 +216,7 @@ class VCCDataModule(LightningDataModule):
 
                 self.test_data = VCCEmbeddingDataset(
                     control_expression=control_data,
-                    perturbed_genes=test_ko_data,
+                    perturbed_genes=perturbed_genes,
                     gene_embeddings=gene_embeddings,
                     ko_expression=None,
                     stage=stage,

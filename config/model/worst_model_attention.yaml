@@ -1,0 +1,48 @@
+# This was froma an optuna run
+
+_target_: src.models.vcc_lightning.VCCModule
+net:
+  _target_: src.models.components.vcc_model_attention.CellModelAttention
+  ko_processor_args:
+    input_size: 512
+    hidden_layers: [256,256,256]
+    output_size: 256
+    dropout: 0
+    activation: relu
+    # no_processing: true
+    residual_connection: true
+  exp_processor_args:
+    input_size: 18080
+    hidden_layers: [256,256,256]
+    output_size: 256
+    dropout: 0
+    activation: relu
+    # no_processing: true
+    residual_connection: true
+  attention_args:
+    embed_dim: 256 # Must be same as the dimensions of your key and value
+    num_heads: 2
+  decoder_args:
+    input_size: 256
+    hidden_layers: [256,256,256]
+    output_size: ${model.net.exp_processor_args.input_size}
+    dropout: 0
+    activation: relu
+    residual_connection: true
+  fusion_type: 'cross_attn'
+loss_fn:
+  _target_: src.models.components.loss_functions.LogCoshError
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-05
+  weight_decay: 1e-5
+scheduler:
+  _target_: torch.optim.lr_scheduler.OneCycleLR
+  _partial_: true
+  max_lr: 1e-2
+
+# lr: 1e-5
+# max_lr: 1e-2
+# weight_decay: 1e-5
+# composite_loss_lambda: 1

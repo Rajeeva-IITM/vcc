@@ -29,16 +29,19 @@ class ProcessingNN(
         Activation function
     no_processing: bool, defaults to False
         Flag to indicate if one wants this component to do nothing
+    residual_connection: bool, defaults to True
+        Whether to include residual connections in the model.
     """
 
     def __init__(
         self,
         input_size: int,
         hidden_layers: list[int],
-        output_size: int,
+        output_size: int,  # Embedding size
         dropout: float,
         activation: str | nn.Module,
         no_processing: bool = False,
+        residual_connection: bool = True,
     ):
         # if len(hidden_layers) < 1:
         #     raise ValueError("Number of layers must be greater than 1.")
@@ -58,29 +61,31 @@ class ProcessingNN(
         self.activation = (
             get_activation(activation) if isinstance(activation, str) else activation
         )
+        self.residual_connection = residual_connection
 
-        self.layers = [self.input_size] + self.hidden_layers + [self.output_size]  # type: ignore
+        self.projection = nn.Linear(self.input_size, self.output_size)
+
+        self.layers = [self.output_size] + self.hidden_layers + [self.output_size]  # type: ignore
         self.sequence = []  # Sequence of layers
 
         if no_processing:
             self.sequence.append(nn.Identity())
 
         else:
-            if len(self.layers) == 2:
+            if len(self.layers) == 2:  # Makes two layers
                 # No hidden layers: just input -> output
+                self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
                 self.sequence.append(
                     nn.Linear(self.layers[0], self.layers[1], dtype=torch.float)
                 )
-                # self.sequence.append(nn.LayerNorm(self.layers[1]))
                 self.sequence.append(self.activation)
             else:
+                self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
+
                 for i in range(len(self.layers) - 2):
                     self.sequence.append(
                         nn.Linear(self.layers[i], self.layers[i + 1], dtype=torch.float)
                     )
-                    # self.sequence.append(
-                    #     nn.LayerNorm(self.layers[i + 1], dtype=torch.float)
-                    # )
                     self.sequence.append(self.activation)
 
                 self.sequence.append(nn.Dropout(self.dropout))
@@ -106,14 +111,21 @@ class ProcessingNN(
             The output tensor produced by the forward pass through the network's layers.
         """
 
-        return self.sequence(x)  # type: ignore
+        input = self.projection(x)
+
+        if self.residual_connection:
+            return self.sequence(input) + input  # type: ignore
+        else:
+            return self.sequence(input)
 
 
 class CellModel(nn.Module):
     """
     Virtual Cell Model
     Model that takes in two inputs processes them individually and returns their vectors.
-    The vectors are then concatenated and processed by an encoder
+    The vectors are then concatenated and processed by an encoder.
+
+
     """
 
     def __init__(

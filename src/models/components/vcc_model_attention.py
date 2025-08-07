@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -7,21 +7,44 @@ from torch.nn import MultiheadAttention
 from src.models.components.basic_vcc_model import ProcessingNN
 
 
+class NormalizedAttention(nn.Module):
+    """
+    Simple attention module. Does not support varied dimensions quite yet
+    """
+
+    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.0) -> None:
+        super().__init__()
+
+        self.norm = nn.LayerNorm(embed_dim)
+        self.mhattention = MultiheadAttention(embed_dim, num_heads, dropout)
+
+    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
+        query = self.norm.forward(query)
+        value = self.norm.forward(value)
+        key = self.norm.forward(key)
+
+        return self.mhattention.forward(query=query, key=key, value=value)
+
+
 class CellModelAttention(nn.Module):
     """
     Virtual Cell Model
-    Model that takes in two inputs (control gene expression and gene knockout status ) and processes them individually and returns their vectors.
+    Model that takes in two inputs (control gene expression and gene knockout status ) and
+    processes them individually and returns their vectors.
     The vectors are then fused and then processed by an attention module, the attention output is processed by a decoder
     to predict the perturbed gene expression
+
+    By default, skip connections are enabled so please ensure that the outputs of ko_processor,
+    exp_processor are the same as the inputs to attention module and decoder.
     """
 
     def __init__(
         self,
-        ko_processor_args: dict,
-        exp_processor_args: dict,
-        # concat_processor_args: dict,
-        decoder_args: dict,
-        attention_args: dict,
+        ko_processor_args: dict[str, Any],
+        exp_processor_args: dict[str, Any],
+        # concat_processor_args: dict[str, Any],
+        decoder_args: dict[str, Any],
+        attention_args: dict[str, Any],
         fusion_type: Literal["sum", "product", "cross_attn", "bilinear"],
         # query: str = "ko_exp" #TODO: Must be able to change what is used as keys and values
     ):
@@ -33,7 +56,7 @@ class CellModelAttention(nn.Module):
         self.exp_processor = ProcessingNN(**exp_processor_args)
         # self.concat_processor = ProcessingNN(**concat_processor_args)
         self.decoder = ProcessingNN(**decoder_args)
-        self.attention = MultiheadAttention(**attention_args)
+        self.attention = NormalizedAttention(**attention_args)
         self.fusion = fusion_type
 
     def forward(self, inputs: dict[str, torch.Tensor]):

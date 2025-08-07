@@ -1,9 +1,13 @@
 # from typing import Any, Dict, List, Tuple
 
+from typing import override
+
 import torch
 import torchmetrics
 from lightning.pytorch import LightningModule
+from lightning.pytorch.utilities import grad_norm
 from torch import nn
+from torch.optim import Optimizer
 
 # from icecream import ic
 from src.models.components.basic_vcc_model import CellModel
@@ -113,7 +117,7 @@ class VCCModule(LightningModule):
     def configure_optimizers(self):
         """Configuring the optimizers."""
 
-        optimizer: torch.optim.Optimizer = self.hparams["optimizer"](self.parameters())
+        optimizer: Optimizer = self.hparams["optimizer"](self.parameters())
 
         scheduler: torch.optim.lr_scheduler.LRScheduler = self.hparams["scheduler"](
             optimizer, total_steps=self.trainer.estimated_stepping_batches
@@ -309,6 +313,10 @@ class VCCModule(LightningModule):
         y_pred = self.forward(X)
 
         return y_pred
+
+    @override
+    def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
+        self.log_dict(grad_norm(self, norm_type=2))
 
 
 if __name__ == "__main__":
