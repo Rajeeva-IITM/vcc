@@ -3,14 +3,14 @@ net:
   _target_: src.models.components.vcc_model_attention.CellModelAttention
   ko_processor_args:
     input_size: 512
-    hidden_layers: []
+    hidden_layers: [512,512,512]
     output_size: 256
     dropout: 0.0
     activation: relu
     # no_processing: true
   exp_processor_args:
     input_size: 18080
-    hidden_layers: [2048,1024,512]
+    hidden_layers: [512,512,512]
     output_size: 256
     dropout: 0.0
     activation: relu
@@ -24,7 +24,7 @@ net:
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
-  fusion_type: 'cross_attn'
+  fusion_type: 'bilinear'
 loss_fn:
   _target_: src.models.components.loss_functions.LogCoshError
 optimizer:

@@ -19,11 +19,16 @@ class NormalizedAttention(nn.Module):
         self.mhattention = MultiheadAttention(embed_dim, num_heads, dropout)
 
     def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
+        """
+        Forward through the module
+        """
         query = self.norm.forward(query)
         value = self.norm.forward(value)
         key = self.norm.forward(key)
 
-        return self.mhattention.forward(query=query, key=key, value=value)
+        return self.mhattention.forward(
+            query=query, key=key, value=value, need_weights=False
+        )
 
 
 class CellModelAttention(nn.Module):
@@ -58,6 +63,12 @@ class CellModelAttention(nn.Module):
         self.decoder = ProcessingNN(**decoder_args)
         self.attention = NormalizedAttention(**attention_args)
         self.fusion = fusion_type
+        if self.fusion == "bilinear":
+            self.bilinear = nn.Bilinear(
+                in1_features=ko_processor_args["output_size"],
+                in2_features=exp_processor_args["output_size"],
+                out_features=attention_args["embed_dim"],
+            )
 
     def forward(self, inputs: dict[str, torch.Tensor]):
         """
@@ -84,6 +95,7 @@ class CellModelAttention(nn.Module):
                 query = fused_representaion.unsqueeze(0)
                 key = fused_representaion.unsqueeze(0)
                 value = fused_representaion.unsqueeze(0)
+
             case "product":
                 fused_representaion = (
                     ko_processed * exp_processed
@@ -91,10 +103,13 @@ class CellModelAttention(nn.Module):
                 query = fused_representaion.unsqueeze(0)
                 key = fused_representaion.unsqueeze(0)
                 value = fused_representaion.unsqueeze(0)
+
             case "cross_attn":
-                query = ko_processed.unsqueeze(0)
-                key = exp_processed.unsqueeze(0)
-                value = exp_processed.unsqueeze(0)
+                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
+                query = fused_representaion.unsqueeze(0)
+                key = fused_representaion.unsqueeze(0)
+                value = fused_representaion.unsqueeze(0)
+
             case "bilinear":
                 query = ko_processed.unsqueeze(0)
                 key = exp_processed.unsqueeze(0)
