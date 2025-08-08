@@ -1,3 +1,5 @@
+from typing import Any, Literal
+
 import torch
 from torch import nn
 
@@ -130,21 +132,22 @@ class CellModel(nn.Module):
 
     def __init__(
         self,
-        ko_processor_args: dict,
-        exp_processor_args: dict,
-        concat_processor_args: dict,
-        decoder_args: dict,
+        ko_processor_args: dict[str, Any],
+        exp_processor_args: dict[str, Any],
+        fused_processor_args: dict[str, Any],
+        decoder_args: dict[str, Any],
+        fusion_type: Literal["sum", "product", "concat", "bilinear"],
     ):
         # TODO: Need to complete input verification code
 
         # assert (
-        #     concat_processor_args["input_size"]
+        #     fused_processor_args["input_size"]
         #     == ko_processor_args["output_size"] + exp_processor_args["output_size"]
         # ), (
         #     "Mismatch in size between concatenated vector and input of concatenated processor"
         # )
 
-        # assert concat_processor_args["output_size"] == decoder_args["input_size"], (
+        # assert fused_processor_args["output_size"] == decoder_args["input_size"], (
         #     "Encoder output size should be the same as the decoder input size"
         # )
 
@@ -152,8 +155,15 @@ class CellModel(nn.Module):
 
         self.ko_processor = ProcessingNN(**ko_processor_args)
         self.exp_processor = ProcessingNN(**exp_processor_args)
-        self.concat_processor = ProcessingNN(**concat_processor_args)
+        self.concat_processor = ProcessingNN(**fused_processor_args)
         self.decoder = ProcessingNN(**decoder_args)
+        self.fusion = fusion_type
+        if self.fusion == "bilinear":
+            self.bilinear = nn.Bilinear(
+                in1_features=ko_processor_args["output_size"],
+                in2_features=exp_processor_args["output_size"],
+                out_features=fused_processor_args["embed_dim"],
+            )
 
     def forward(self, inputs: dict[str, torch.Tensor]):
         """
@@ -170,9 +180,30 @@ class CellModel(nn.Module):
         ko_processed = self.ko_processor.forward(ko_vec)
         exp_processed = self.exp_processor.forward(exp_vec)
 
-        concatenated = torch.cat((ko_processed, exp_processed), dim=1)
+        # Fusing the two representations
+        match self.fusion:
+            case "sum":
+                fused_representaion = (
+                    ko_processed + exp_processed
+                )  # Ensure they are of same size
 
-        latent = self.concat_processor.forward(concatenated)
+            case "product":
+                fused_representaion = (
+                    ko_processed * exp_processed
+                )  # Ensure they are of same size
+
+            case "concat":
+                fused_representaion = torch.cat([ko_processed, exp_processed], dim=1)
+
+            case "bilinear":
+                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
+
+            case _:
+                raise ValueError(
+                    "fusion_type should be one of ['sum','product','cross_attn', 'bilinear']"
+                )
+
+        latent = self.concat_processor.forward(fused_representaion)
 
         output = self.decoder.forward(latent)
 

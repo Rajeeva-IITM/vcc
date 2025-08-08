@@ -66,9 +66,9 @@ class VCCDataset(Dataset):
         # print(control_expression)
 
         # Converting to numpy because polars misbehaves with multiprocessing
-        self.ko_expression = ko_expression.to_numpy()
-        self.control_expression = control_expression.to_numpy()
-        self.ko_gene_data = ko_gene_data.to_numpy()
+        self.ko_expression = ko_expression.to_numpy().astype(np.float16)
+        self.control_expression = control_expression.to_numpy().astype(np.float16)
+        self.ko_gene_data = ko_gene_data.to_numpy().astype(np.float16)
         # self.dtype = dtype
 
         # print(f"Data lengths\
@@ -99,12 +99,12 @@ class VCCDataset(Dataset):
                 and the knockout expression tensor as the target.
         """
 
-        ko_input = self.ko_gene_data[index, :].astype(np.float16)
-        exp_input = self.control_expression[index, :].astype(np.float16)
+        ko_input = self.ko_gene_data[index, :]
+        exp_input = self.control_expression[index, :]
         if self.stage == "predict":
             pred_input = []
         else:
-            pred_input = self.ko_expression[index, :].astype(np.float16)
+            pred_input = self.ko_expression[index, :]
 
         return {"ko_vec": ko_input, "exp_vec": exp_input}, pred_input
 

@@ -9,7 +9,7 @@ from src.models.components.basic_vcc_model import ProcessingNN
 
 class NormalizedAttention(nn.Module):
     """
-    Simple attention module. Does not support varied dimensions quite yet
+    Simple attention module. Does not support varying dimensions quite yet
     """
 
     def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.0) -> None:
@@ -105,18 +105,18 @@ class CellModelAttention(nn.Module):
                 value = fused_representaion.unsqueeze(0)
 
             case "cross_attn":
-                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
-                query = fused_representaion.unsqueeze(0)
-                key = fused_representaion.unsqueeze(0)
-                value = fused_representaion.unsqueeze(0)
+                query = ko_processed.unsqueeze(0)
+                key = exp_processed.unsqueeze(0)
+                value = exp_processed.unsqueeze(0)
 
             case "bilinear":
+                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
                 query = ko_processed.unsqueeze(0)
                 key = exp_processed.unsqueeze(0)
                 value = exp_processed.unsqueeze(0)
             case _:
                 raise ValueError(
-                    "fusion_type should be one of ['sum','product','cross_attn']"
+                    "fusion_type should be one of ['sum','product','cross_attn', 'bilinear']"
                 )
 
         # Moving onto the attention module
