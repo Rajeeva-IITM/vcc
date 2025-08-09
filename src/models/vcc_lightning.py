@@ -122,7 +122,6 @@ class VCCModule(LightningModule):
         scheduler: torch.optim.lr_scheduler.LRScheduler = self.hparams["scheduler"](
             optimizer,
             # total_steps=self.trainer.estimated_stepping_batches # For OneCycleLR
-            T_0=10,  # For Cosine Annealing
         )
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}

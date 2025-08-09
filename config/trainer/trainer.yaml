@@ -6,3 +6,4 @@ max_epochs: 100
 logger: true
 fast_dev_run: false
 default_root_dir: ${paths.log_dir}
+# profiler: 'simple' # Can be useful but makes the size of logs huge

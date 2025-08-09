@@ -2,10 +2,10 @@ import gc
 import warnings
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import polars.selectors as cs
 import rich
+import torch
 from lightning.pytorch import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
@@ -66,10 +66,13 @@ class VCCDataset(Dataset):
         # print(control_expression)
 
         # Converting to numpy because polars misbehaves with multiprocessing
-        self.ko_expression = ko_expression.to_numpy().astype(np.float16)
-        self.control_expression = control_expression.to_numpy().astype(np.float16)
-        self.ko_gene_data = ko_gene_data.to_numpy().astype(np.float16)
+        # self.ko_expression = ko_expression.to_numpy().astype(np.float32)
+        # self.control_expression = control_expression.to_numpy().astype(np.float32)
+        # self.ko_gene_data = ko_gene_data.to_numpy().astype(np.float32)
         # self.dtype = dtype
+        self.ko_expression = ko_expression.to_torch(dtype=pl.Float32)
+        self.control_expression = control_expression.to_torch(dtype=pl.Float32)
+        self.ko_gene_data = ko_gene_data.to_torch(dtype=pl.Float32)
 
         # print(f"Data lengths\
         #         {self.ko_expression.shape, self.control_expression.shape, self.ko_gene_data.shape}")
@@ -88,7 +91,7 @@ class VCCDataset(Dataset):
 
     def __getitem__(
         self, index: int
-    ) -> tuple[dict[str, np.ndarray], np.ndarray | list]:
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor | list]:
         """
         Retrieves a single data sample from the dataset at the specified index.
         Args:
