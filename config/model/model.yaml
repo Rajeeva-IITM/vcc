@@ -3,45 +3,39 @@ net:
   _target_: src.models.components.basic_vcc_model.CellModel
   ko_processor_args:
     input_size: 512
-    hidden_layers: []
-    output_size: 256
-    dropout: 0.0
-    activation: relu
-    no_processing: true
-  exp_processor_args:
-    input_size: 18080
-    hidden_layers: [2048,1024,512]
+    hidden_layers: [512,512,512]
     output_size: 256
     dropout: 0.0
     activation: relu
     # no_processing: true
-  concat_processor_args:
-    input_size: 768 # ${model.net.ko_processor_args.output_size} + ${model.net.exp_processor_args.output_size}
+  exp_processor_args:
+    input_size: 18080
+    hidden_layers: [512,512,512]
+    output_size: 256
+    dropout: 0.0
+    activation: relu
+    # no_processing: true
+  fused_processor_args:
+    input_size: 768
     hidden_layers: [512, 256]
     output_size: 256
     dropout: 0.0
     activation: relu
-    # no_processing: true
+    no_processing: true
   decoder_args:
-    input_size: ${model.net.concat_processor_args.output_size}
-    hidden_layers: [512, 1024, 2048]
+    input_size: ${model.net.fused_processor_args.output_size}
+    hidden_layers: [512, 1024, 2048, 4096]
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
+  fusion_type: bilinear
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
-  loss_functions:
-    - _target_: src.models.components.loss_functions.MSLE
-    - _target_: torch.nn.MSELoss
-  weights:
-    - 0.5
-    - 0.5
+  _target_: torch.nn.MSELoss
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
-  lr: 1e-5
+  lr: 1e-2
   weight_decay: 1e-5
 scheduler:
-  _target_: torch.optim.lr_scheduler.OneCycleLR
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
   _partial_: true
-  max_lr: 1e-2

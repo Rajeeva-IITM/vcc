@@ -64,16 +64,17 @@ class ProcessingNN(
             get_activation(activation) if isinstance(activation, str) else activation
         )
         self.residual_connection = residual_connection
+        self.no_processing = no_processing
 
-        self.projection = nn.Linear(self.input_size, self.output_size)
-
-        self.layers = [self.output_size] + self.hidden_layers + [self.output_size]  # type: ignore
         self.sequence = []  # Sequence of layers
 
         if no_processing:
             self.sequence.append(nn.Identity())
 
         else:
+            self.projection = nn.Linear(self.input_size, self.output_size)
+
+            self.layers = [self.output_size] + self.hidden_layers + [self.output_size]  # type: ignore
             if len(self.layers) == 2:  # Makes two layers
                 # No hidden layers: just input -> output
                 self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
@@ -112,6 +113,9 @@ class ProcessingNN(
         tensor
             The output tensor produced by the forward pass through the network's layers.
         """
+
+        if self.no_processing:
+            return self.sequence(x)
 
         input = self.projection(x)
 
@@ -162,7 +166,7 @@ class CellModel(nn.Module):
             self.bilinear = nn.Bilinear(
                 in1_features=ko_processor_args["output_size"],
                 in2_features=exp_processor_args["output_size"],
-                out_features=fused_processor_args["embed_dim"],
+                out_features=fused_processor_args["output_size"],
             )
 
     def forward(self, inputs: dict[str, torch.Tensor]):
