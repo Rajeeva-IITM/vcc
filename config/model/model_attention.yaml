@@ -24,6 +24,7 @@ net:
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
+    residual_connection: false
   fusion_type: 'bilinear'
 loss_fn:
   _target_: src.models.components.loss_functions.LogCoshError
@@ -33,9 +34,9 @@ optimizer:
   lr: 1e-5
   weight_decay: 1e-5
 scheduler:
-  _target_: torch.optim.lr_scheduler.OneCycleLR
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
   _partial_: true
-  max_lr: 1e-2
+  T_0: 15
 
 # lr: 1e-5
 # max_lr: 1e-2

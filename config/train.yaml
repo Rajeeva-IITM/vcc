@@ -13,3 +13,5 @@ seed: 42
 logging:
   wandb:
     job_type: VCC
+
+ckpt_path: null # In case one wants to resume training

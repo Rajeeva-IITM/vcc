@@ -4,7 +4,7 @@ import rich
 import rootutils
 import torch
 import wandb
-from lightning import LightningDataModule, LightningModule
+from lightning import LightningDataModule, LightningModule, Trainer
 from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
@@ -42,11 +42,11 @@ def main(conf: DictConfig):
 
     console.log(f"Instantiating Trainer: {conf.trainer._target_}")
 
-    trainer = hydra.utils.instantiate(
+    trainer: Trainer = hydra.utils.instantiate(
         conf.trainer, logger=logger, callbacks=[*callbacks]
     )
 
-    trainer.fit(model, datamodule)
+    trainer.fit(model, datamodule, ckpt_path=conf.get("ckpt_path"))
     wandb.finish()
 
 
