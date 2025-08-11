@@ -1,7 +1,33 @@
 import torch
 import torch.nn as nn
+from torchmetrics.functional import spearman_corrcoef
 
-# import torchmetrics
+
+class PerturbationSimilarityLoss(nn.Module):
+    """
+    Measuring perturbation similarity
+    """
+
+    def __init__(self) -> None:
+        super(PerturbationSimilarityLoss, self).__init__()
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        *args,
+        **kwargs,
+    ):
+        pairwise_distances = torch.pdist(y_pred)
+
+        gene_distances = torch.pdist(gene_embeddings)
+
+        calc = 1 - spearman_corrcoef(
+            pairwise_distances, gene_distances
+        )  # Distance must be comparable to genes
+
+        return calc
 
 
 class BatchVariance(nn.Module):
@@ -48,7 +74,12 @@ class DiffExpError(nn.Module):
         self.reduction = reduction
 
     def forward(
-        self, y_pred: torch.Tensor, y_true: torch.Tensor, control_exp: torch.Tensor
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+        *args,
+        **kwargs,
     ):
         """
         Calculate the error
@@ -350,6 +381,35 @@ class MSEandDiffExpLoss(nn.Module):
         diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
 
         return self.weights[0] * mse_loss + self.weights[1] * diffexp
+
+
+class MDPLoss(nn.Module):
+    """
+    A combination of MSE, Diff Exp and Perturbation sensitivity losses.
+    Because of the different requirements of each of the losses Composite loss won't work
+    Play around with the weights
+    """
+
+    def __init__(
+        self, weights: list[int] = [1, 1, 1], reduction: str | None = "mean"
+    ) -> None:
+        super().__init__()
+
+        self.weights = weights
+        self.mse = torch.nn.MSELoss(reduction=reduction)
+        self.diffexp = DiffExpError(reduction=reduction)
+        self.psl = PerturbationSimilarityLoss()
+
+    def forward(self, y_pred, y_true, **kwargs):
+        mse_loss = self.mse.forward(y_pred, y_true)
+        diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
+        psl = self.psl.forward(y_pred, y_true, **kwargs)
+
+        return (
+            (self.weights[0] * mse_loss)
+            + (self.weights[1] * diffexp)
+            + (self.weights[2] * psl)
+        )
 
 
 if __name__ == "__main__":

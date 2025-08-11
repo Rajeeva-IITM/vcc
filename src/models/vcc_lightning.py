@@ -64,6 +64,7 @@ class VCCModule(LightningModule):
         # self.train_corr = torchmetrics.SpearmanCorrCoef()
         self.train_genevar = lf.BatchVariance()
         self.train_diffexp = lf.DiffExpError()
+        self.train_psl = lf.PerturbationSimilarityLoss()
 
         self.val_mae = torchmetrics.MeanAbsoluteError()
         # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
@@ -71,6 +72,7 @@ class VCCModule(LightningModule):
         # self.val_corr = torchmetrics.SpearmanCorrCoef()
         self.val_genevar = lf.BatchVariance()
         self.val_diffexp = lf.DiffExpError()
+        self.val_psl = lf.PerturbationSimilarityLoss()
 
         self.test_mae = torchmetrics.MeanAbsoluteError()
         # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
@@ -78,6 +80,7 @@ class VCCModule(LightningModule):
         # self.test_corr = torchmetrics.SpearmanCorrCoef()
         self.test_genevar = lf.BatchVariance()
         self.test_diffexp = lf.DiffExpError()
+        self.test_psl = lf.PerturbationSimilarityLoss()
 
     def configure_optimizers(self):
         """Configuring the optimizers."""
@@ -111,7 +114,9 @@ class VCCModule(LightningModule):
         y_pred = self.forward(X)
         # ic(y, y.shape)
         # ic(y_pred, y_pred.shape)
-        loss = self.criterion(y_pred, y, control_exp=X["exp_vec"])  # For some losses
+        loss = self.criterion(
+            y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
+        )  # For some losses
 
         self.train_mae.update(y_pred, y)
         self.train_cosine = torchmetrics.functional.cosine_similarity(
@@ -127,6 +132,7 @@ class VCCModule(LightningModule):
 
         gene_level_variance = self.train_genevar.forward(y_pred, y)
         diff_exp = self.train_diffexp.forward(y_pred, y, X["exp_vec"])
+        psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
 
         self.log(
             "train/loss", loss, on_epoch=True, on_step=True, prog_bar=True, logger=True
@@ -165,6 +171,7 @@ class VCCModule(LightningModule):
         )
 
         self.log("train/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
+        self.log("train/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
 
         return loss
 
@@ -177,7 +184,9 @@ class VCCModule(LightningModule):
             y,
         ) = batch
         y_pred = self.forward(X)
-        loss = self.criterion(y_pred, y, control_exp=X["exp_vec"])  # For some losses
+        loss = self.criterion(
+            y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
+        )  # For some losses
 
         self.val_mae.update(y_pred, y)
         self.val_cosine = torchmetrics.functional.cosine_similarity(
@@ -192,6 +201,7 @@ class VCCModule(LightningModule):
 
         gene_level_variance = y_pred.var(dim=0).mean()
         diff_exp = self.val_diffexp.forward(y_pred, y, X["exp_vec"])
+        psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
 
         self.log(
             "val/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
@@ -235,6 +245,7 @@ class VCCModule(LightningModule):
         )
 
         self.log("val/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
+        self.log("train/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
 
         return loss
 
@@ -244,7 +255,9 @@ class VCCModule(LightningModule):
         """
         X, y = batch
         y_pred = self.forward(X)
-        loss = self.criterion(y_pred, y, control_exp=X["exp_vec"])  # For some losses
+        loss = self.criterion(
+            y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
+        )  # For some losses
 
         self.test_mae.update(y_pred, y)
         self.test_cosine = torchmetrics.functional.cosine_similarity(
@@ -258,6 +271,7 @@ class VCCModule(LightningModule):
 
         gene_level_variance = y_pred.var(dim=0).mean()
         diff_exp = self.test_diffexp.forward(y_pred, y, X["exp_vec"])
+        psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
 
         self.log(
             "test/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
@@ -301,6 +315,7 @@ class VCCModule(LightningModule):
         )
 
         self.log("test/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
+        self.log("train/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
 
         return loss
 
