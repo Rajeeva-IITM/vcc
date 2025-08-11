@@ -31,7 +31,10 @@ net:
     residual_connection: false # Avoids negative values
   fusion_type: bilinear
 loss_fn:
-  _target_: torch.nn.MSELoss
+  _target_: src.models.components.loss_functions.MSEandDiffExpLoss
+  weights:
+    - 1
+    - 0.8
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true

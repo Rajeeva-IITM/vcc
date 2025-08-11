@@ -4,6 +4,76 @@ import torch.nn as nn
 # import torchmetrics
 
 
+class BatchVariance(nn.Module):
+    """
+    Variance of genes across a batch
+    """
+
+    def __init__(self, reduction: str | None = "mean"):
+        super(BatchVariance, self).__init__()
+        self.reduction = reduction
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
+        """
+        Calculate the variance of genes across a batch
+
+        Args:
+            y_pred (torch.Tensor): Predicted tensor
+            y_true (torch.Tensor): Truth tensor (not used)
+
+        Returns:
+            torch.Tensor: loss
+        """
+
+        calc = y_pred.var(dim=0)
+
+        match self.reduction:
+            case "sum":
+                return calc.sum()
+            case "mean":
+                return calc.mean()
+            case _:
+                return calc
+
+
+class DiffExpError(nn.Module):
+    """
+    Measures changes in differential expression between y_pred and y_true
+    compared to the control samples
+    """
+
+    def __init__(self, reduction: str | None = "mean") -> None:
+        super().__init__()
+
+        self.reduction = reduction
+
+    def forward(
+        self, y_pred: torch.Tensor, y_true: torch.Tensor, control_exp: torch.Tensor
+    ):
+        """
+        Calculate the error
+
+        Args:
+            y_pred (torch.Tensor): Predicted tensor
+            y_true (torch.Tensor): Truth tensor
+
+         Returns:
+             torch.Tensor: loss
+        """
+
+        diff_true = y_pred - control_exp  # Ensure the expression is log transformed
+        diff_pred = y_true - control_exp  # Ensure the expression is log transformed
+
+        calc = (diff_true - diff_pred).pow(2).mean()  # MSE between the differences
+
+        if self.reduction == "sum":
+            return calc.sum()
+        elif self.reduction == "mean":
+            return calc.mean()
+        else:
+            return calc
+
+
 class LogCoshError(nn.Module):
     """
     Log Cosh Loss
@@ -13,13 +83,13 @@ class LogCoshError(nn.Module):
         super(LogCoshError, self).__init__()
         self.reduction = reduction
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
         """
         Calculate the error
 
         Args:
             y_pred (torch.Tensor): Predicted tensor
-            y_true (torch.Tensor): Predicted tensor
+            y_true (torch.Tensor): Truth tensor
 
          Returns:
              torch.Tensor: loss
@@ -57,7 +127,9 @@ class NegativeBinomialLoss(nn.Module):
         self.log_alpha = nn.Parameter(torch.tensor(0.0))
         self.eps = eps
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs
+    ) -> torch.Tensor:
         """
         Calculates the Negative Binomial loss.
 
@@ -135,7 +207,7 @@ class MSLE(nn.Module):
 
         self.reduction = reduction
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
         """
         Forward pass
         """
@@ -182,7 +254,7 @@ class WeightedMAELoss(nn.Module):
             init_weights = torch.ones(num_genes)
         self.weights = nn.Parameter(init_weights)
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
         """
         Forward pass
         """
@@ -233,7 +305,7 @@ class CompositeLoss(nn.Module):
         self.loss_functions = loss_functions
         self.weights = weights
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
         """
         Computes a custom loss as a weighted sum of the constituent losses.
         Args:
@@ -249,6 +321,33 @@ class CompositeLoss(nn.Module):
             final_loss += weight * loss_function.forward(y_pred, y_true)
 
         return final_loss
+
+
+# Unclean compositeLosses
+#
+
+
+class MSEandDiffExpLoss(nn.Module):
+    """
+    A combination of MSE and Differential Expression loss.
+    Won't work smoothly in the `CompositeLoss` class because
+    the former requires two inputs while the latter requries three
+    """
+
+    def __init__(
+        self, weights: list[int] = [1, 1], reduction: str | None = "mean"
+    ) -> None:
+        super().__init__()
+
+        self.weights = weights
+        self.mse = torch.nn.MSELoss(reduction=reduction)
+        self.diffexp = DiffExpError(reduction=reduction)
+
+    def forward(self, y_pred, y_true, *args, **kwargs):
+        mse_loss = self.mse.forward(y_pred, y_true)
+        diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
+
+        return self.weights[0] * mse_loss + self.weights[1] * diffexp
 
 
 if __name__ == "__main__":

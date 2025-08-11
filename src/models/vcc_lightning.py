@@ -9,7 +9,7 @@ from lightning.pytorch.utilities import grad_norm
 from torch import nn
 from torch.optim import Optimizer
 
-# from icecream import ic
+from src.models.components import loss_functions as lf
 from src.models.components.basic_vcc_model import CellModel
 
 # from src.models.components.loss_functions import CompositeLoss
@@ -51,68 +51,33 @@ class VCCModule(LightningModule):
     ) -> None:
         super().__init__()
 
-        self.save_hyperparameters(logger=False, ignore=["net"])
+        self.save_hyperparameters(
+            logger=False,
+        )  # Lightning will ask to ignore nn.Module but it'll cause problems
 
         self.net = net
         self.criterion = loss_fn
-        # self.lr = lr
-        # self.max_lr = max_lr
-        # self.weight_decay = weight_decay
 
         self.train_mae = torchmetrics.MeanAbsoluteError()
         # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.train_mse = torchmetrics.MeanSquaredError()
         # self.train_corr = torchmetrics.SpearmanCorrCoef()
+        self.train_genevar = lf.BatchVariance()
+        self.train_diffexp = lf.DiffExpError()
 
         self.val_mae = torchmetrics.MeanAbsoluteError()
         # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.val_mse = torchmetrics.MeanSquaredError()
         # self.val_corr = torchmetrics.SpearmanCorrCoef()
+        self.val_genevar = lf.BatchVariance()
+        self.val_diffexp = lf.DiffExpError()
 
         self.test_mae = torchmetrics.MeanAbsoluteError()
         # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         self.test_mse = torchmetrics.MeanSquaredError()
         # self.test_corr = torchmetrics.SpearmanCorrCoef()
-
-    # def configure_optimizers(self) -> Dict[str, Any]:
-    #     """Choose what optimizers and learning-rate schedulers to use in your optimization.
-    #     Normally you'd need one. But in the case of GANs or similar you might have multiple.
-
-    #     :Returns: A dict containing the configured optimizers and learning-rate schedulers to be used for training.
-    #     """
-    #     optimizer = self.hparams.optimizer(params=self.trainer.model.parameters()) # type: ignore
-    #     if self.hparams.scheduler is not None: # type: ignore
-    #         scheduler = self.hparams.scheduler(optimizer=optimizer) # type: ignore
-    #         return {
-    #             "optimizer": optimizer,
-    #             "lr_scheduler": {
-    #                 "scheduler": scheduler,
-    #                 "monitor": "val/loss",
-    #                 "interval": "epoch",
-    #                 "frequency": 1,
-    #             },
-    #         }
-    #     return {"optimizer": optimizer}
-
-    # def configure_optimizers(self):
-    #     """Returns the configured optimizers and schedulers for training the model.
-
-    #     Returns:
-    #         Tuple[List[torch.optim.Optimizer], List[torch.optim.lr_scheduler._LRScheduler]]: A tuple containing the configured optimizers and schedulers.
-    #     """
-    #     optimizer = torch.optim.AdamW(
-    #         self.parameters(),
-    #         lr=self.lr,
-    #         weight_decay=self.weight_decay,
-    #     )
-    #     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    #         optimizer,
-    #         max_lr=self.max_lr,
-    #         total_steps=self.trainer.estimated_stepping_batches,
-    #     )
-
-    #     return [optimizer], [scheduler]
-    #
+        self.test_genevar = lf.BatchVariance()
+        self.test_diffexp = lf.DiffExpError()
 
     def configure_optimizers(self):
         """Configuring the optimizers."""
@@ -146,7 +111,7 @@ class VCCModule(LightningModule):
         y_pred = self.forward(X)
         # ic(y, y.shape)
         # ic(y_pred, y_pred.shape)
-        loss = self.criterion(y_pred, y)
+        loss = self.criterion(y_pred, y, control_exp=X["exp_vec"])  # For some losses
 
         self.train_mae.update(y_pred, y)
         self.train_cosine = torchmetrics.functional.cosine_similarity(
@@ -159,6 +124,9 @@ class VCCModule(LightningModule):
         corr = torchmetrics.functional.spearman_corrcoef(
             y_pred.T, y.T
         ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
+
+        gene_level_variance = self.train_genevar.forward(y_pred, y)
+        diff_exp = self.train_diffexp.forward(y_pred, y, X["exp_vec"])
 
         self.log(
             "train/loss", loss, on_epoch=True, on_step=True, prog_bar=True, logger=True
@@ -192,15 +160,24 @@ class VCCModule(LightningModule):
             "train/corr", corr, on_epoch=True, on_step=True, prog_bar=True, logger=True
         )
 
+        self.log(
+            "train/var", gene_level_variance, on_epoch=True, prog_bar=True, logger=True
+        )
+
+        self.log("train/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
+
         return loss
 
     def validation_step(self, batch, batch_idx):
         """
         Validation step
         """
-        X, y = batch
+        (
+            X,
+            y,
+        ) = batch
         y_pred = self.forward(X)
-        loss = self.criterion(y_pred, y)
+        loss = self.criterion(y_pred, y, control_exp=X["exp_vec"])  # For some losses
 
         self.val_mae.update(y_pred, y)
         self.val_cosine = torchmetrics.functional.cosine_similarity(
@@ -212,6 +189,9 @@ class VCCModule(LightningModule):
         corr = torchmetrics.functional.spearman_corrcoef(
             y_pred.T, y.T
         ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
+
+        gene_level_variance = y_pred.var(dim=0).mean()
+        diff_exp = self.val_diffexp.forward(y_pred, y, X["exp_vec"])
 
         self.log(
             "val/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
@@ -250,6 +230,12 @@ class VCCModule(LightningModule):
             logger=True,
         )
 
+        self.log(
+            "val/var", gene_level_variance, on_epoch=True, prog_bar=True, logger=True
+        )
+
+        self.log("val/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
+
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -258,7 +244,7 @@ class VCCModule(LightningModule):
         """
         X, y = batch
         y_pred = self.forward(X)
-        loss = self.criterion(y_pred, y)
+        loss = self.criterion(y_pred, y, control_exp=X["exp_vec"])  # For some losses
 
         self.test_mae.update(y_pred, y)
         self.test_cosine = torchmetrics.functional.cosine_similarity(
@@ -269,6 +255,9 @@ class VCCModule(LightningModule):
         corr = torchmetrics.functional.spearman_corrcoef(
             y_pred.T, y.T
         ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
+
+        gene_level_variance = y_pred.var(dim=0).mean()
+        diff_exp = self.test_diffexp.forward(y_pred, y, X["exp_vec"])
 
         self.log(
             "test/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
@@ -307,10 +296,16 @@ class VCCModule(LightningModule):
             logger=True,
         )
 
+        self.log(
+            "test/var", gene_level_variance, on_epoch=True, prog_bar=True, logger=True
+        )
+
+        self.log("test/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
+
         return loss
 
     def predict_step(self, batch, batch_ix):
-        X, _ = batch
+        X, _, _ = batch
         y_pred = self.forward(X)
 
         return y_pred

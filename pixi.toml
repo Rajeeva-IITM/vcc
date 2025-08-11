@@ -25,6 +25,7 @@ numpy = ">=2.3.2,<3"
 pip = ">=25.2,<26"
 optuna = ">=4.4.0,<5"
 optuna-integration = ">=4.4.0,<5"
+torchmetrics = ">=1.8.1,<2"
 
 [system-requirements]
 cuda = "12.0"

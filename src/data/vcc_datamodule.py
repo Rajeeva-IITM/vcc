@@ -24,6 +24,7 @@ class VCCDataset(Dataset):
         control_expression: pl.DataFrame,
         ko_gene_data: pl.DataFrame,
         stage: str | None,
+        gene_names: list[str],
         # dtype: torch.dtype | = torch.float32,
     ) -> None:
         """Dataset for holding the expression to_numpy() and the knockout vector
@@ -73,6 +74,7 @@ class VCCDataset(Dataset):
         self.ko_expression = ko_expression.to_torch(dtype=pl.Float32)
         self.control_expression = control_expression.to_torch(dtype=pl.Float32)
         self.ko_gene_data = ko_gene_data.to_torch(dtype=pl.Float32)
+        self.genes = gene_names
 
         # print(f"Data lengths\
         #         {self.ko_expression.shape, self.control_expression.shape, self.ko_gene_data.shape}")
@@ -91,7 +93,7 @@ class VCCDataset(Dataset):
 
     def __getitem__(
         self, index: int
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor | list]:
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor | list[None]]:
         """
         Retrieves a single data sample from the dataset at the specified index.
         Args:
@@ -104,6 +106,7 @@ class VCCDataset(Dataset):
 
         ko_input = self.ko_gene_data[index, :]
         exp_input = self.control_expression[index, :]
+        # genes = [self.genes[index]]
         if self.stage == "predict":
             pred_input = []
         else:
@@ -238,11 +241,12 @@ class VCCDataModule(LightningDataModule):
 
                 # Assembling the pieces
                 console.log("Creating Dataset")
-                self.data = VCCDataset(data, control_data, ko_gene_data, stage)
+                gene_names = get_gene_names(ko_gene_data)
+                self.data = VCCDataset(
+                    data, control_data, ko_gene_data, stage, gene_names
+                )
 
                 console.log("Data splitting")
-
-                gene_names = get_gene_names(ko_gene_data)
 
                 train_index, val_index = gene_train_test_split(
                     gene_names,  # type: ignore

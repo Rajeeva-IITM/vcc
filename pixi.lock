@@ -354,7 +354,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tk-8.6.13-noxft_hd72426e_102.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tokenizers-0.21.2-py312h8360d73_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.2.1-pyhd8ed1ab_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/torchmetrics-1.7.3-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/torchmetrics-1.8.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tornado-6.5.1-py312h66e93f0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tqdm-4.67.1-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/traitlets-5.14.3-pyhd8ed1ab_1.conda
@@ -5386,9 +5386,9 @@ packages:
   - pkg:pypi/tomli?source=hash-mapping
   size: 19167
   timestamp: 1733256819729
-- conda: https://conda.anaconda.org/conda-forge/noarch/torchmetrics-1.7.3-pyhd8ed1ab_0.conda
-  sha256: 2f52924f3a531584088ec56e8850630f55776e409ffd1b6b5348c7148dbad16c
-  md5: 8c31b5c412e6bd9068f41c112bc5a046
+- conda: https://conda.anaconda.org/conda-forge/noarch/torchmetrics-1.8.1-pyhd8ed1ab_0.conda
+  sha256: b548a140c625bd22d733861e3d420e8cd4b20a8274fc0d87f58a226fbaffdbc2
+  md5: 19b993b83478ab9c970a05369f7615e8
   depends:
   - lightning-utilities >=0.8.0
   - numpy >1.20.0
@@ -5398,11 +5398,10 @@ packages:
   - setuptools
   - typing_extensions
   license: Apache-2.0
-  license_family: APACHE
   purls:
-  - pkg:pypi/torchmetrics?source=hash-mapping
-  size: 388110
-  timestamp: 1750056866606
+  - pkg:pypi/torchmetrics?source=compressed-mapping
+  size: 396611
+  timestamp: 1754654369507
 - conda: https://conda.anaconda.org/conda-forge/linux-64/tornado-6.5.1-py312h66e93f0_0.conda
   sha256: c96be4c8bca2431d7ad7379bad94ed6d4d25cd725ae345540a531d9e26e148c9
   md5: c532a6ee766bed75c4fa0c39e959d132
