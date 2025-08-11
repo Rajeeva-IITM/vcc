@@ -64,7 +64,9 @@ class DiffExpError(nn.Module):
         diff_true = y_pred - control_exp  # Ensure the expression is log transformed
         diff_pred = y_true - control_exp  # Ensure the expression is log transformed
 
-        calc = (diff_true - diff_pred).pow(2).mean()  # MSE between the differences
+        calc = 1 - torch.cosine_similarity(
+            diff_true, diff_pred
+        )  # cosine between the differences
 
         if self.reduction == "sum":
             return calc.sum()
