@@ -36,8 +36,8 @@ class PerturbationSimilarityLoss(nn.Module):
         #     pairwise_distances, gene_distances
         # )  # Distance must be comparable to genes
 
-        calc = (
-            (pairwise_distances - gene_distances).pow(2).mean()
+        calc = 1 - (
+            torch.cosine_similarity(pairwise_distances, gene_distances)
         )  # MSE over the distances
 
         return calc
