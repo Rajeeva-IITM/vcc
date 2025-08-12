@@ -245,7 +245,7 @@ class VCCModule(LightningModule):
         )
 
         self.log("val/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
-        self.log("train/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
+        self.log("val/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
 
         return loss
 
@@ -315,12 +315,12 @@ class VCCModule(LightningModule):
         )
 
         self.log("test/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
-        self.log("train/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
+        self.log("val/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
 
         return loss
 
     def predict_step(self, batch, batch_ix):
-        X, _, _ = batch
+        X, _ = batch
         y_pred = self.forward(X)
 
         return y_pred

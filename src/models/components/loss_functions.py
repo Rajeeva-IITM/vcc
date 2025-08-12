@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from torchmetrics.functional import spearman_corrcoef
 
 
 class PerturbationSimilarityLoss(nn.Module):
@@ -8,8 +7,12 @@ class PerturbationSimilarityLoss(nn.Module):
     Measuring perturbation similarity
     """
 
-    def __init__(self) -> None:
-        super(PerturbationSimilarityLoss, self).__init__()
+    def __init__(self, eps=1e-6) -> None:
+        super(
+            PerturbationSimilarityLoss,
+            self,
+        ).__init__()
+        self.eps = eps
 
     def forward(
         self,
@@ -20,12 +23,22 @@ class PerturbationSimilarityLoss(nn.Module):
         **kwargs,
     ):
         pairwise_distances = torch.pdist(y_pred)
+        pairwise_distances = (pairwise_distances - pairwise_distances.mean()) / (
+            pairwise_distances.std() + self.eps
+        )
 
         gene_distances = torch.pdist(gene_embeddings)
+        gene_distances = (gene_distances - gene_distances.mean()) / (
+            gene_distances.std() + self.eps
+        )
 
-        calc = 1 - spearman_corrcoef(
-            pairwise_distances, gene_distances
-        )  # Distance must be comparable to genes
+        # calc = 1 - spearman_corrcoef(
+        #     pairwise_distances, gene_distances
+        # )  # Distance must be comparable to genes
+
+        calc = (
+            (pairwise_distances - gene_distances).pow(2).mean()
+        )  # MSE over the distances
 
         return calc
 
