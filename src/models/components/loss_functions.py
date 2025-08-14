@@ -1,17 +1,18 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class PerturbationSimilarityLoss(nn.Module):
+class WeightedContrastiveLoss(nn.Module):
     """
-    Measuring perturbation similarity
+    A weighted contrastive loss for ensuring model produces different embeddings for different genetic
+    perturbations
     """
 
-    def __init__(self, eps=1e-6) -> None:
-        super(
-            PerturbationSimilarityLoss,
-            self,
-        ).__init__()
+    def __init__(self, temperature: float = 0.1, alpha: float = 2.0, eps: float = 1e-8):
+        super(WeightedContrastiveLoss, self).__init__()
+        self.temperature = temperature
+        self.alpha = alpha
         self.eps = eps
 
     def forward(
@@ -22,25 +23,104 @@ class PerturbationSimilarityLoss(nn.Module):
         *args,
         **kwargs,
     ):
+        """
+        Calculate the Contrastive Loss weighted based on genetic similarity
+
+        Args:
+            y_pred (Tensor): predicted expression
+            y_true (Tensor): not used
+            gene_embeddings (Tensor): Emebeddings representing genes
+            args, kwargs can be ignored and are present only for consistency
+
+        Returns:
+            Tensor (loss)
+        """
+        batch_size = y_pred.shape[0]
+        device = y_pred.device
+
+        pred_norm = F.normalize(y_pred, dim=-1)
+        gene_norm = F.normalize(gene_embeddings, dim=-1)
+
+        # Calculate cosine distances
+
+        pred_sim_mat = (
+            torch.matmul(pred_norm, pred_norm.T) / self.temperature
+        )  # Temperature to scale the distances
+        gene_sim_mat = torch.matmul(gene_norm, gene_norm.T)
+
+        # Removing diagonal
+
+        mask = ~torch.eye(batch_size, dtype=torch.bool, device=device)
+        pred_sim_off_diag = pred_sim_mat[mask].view(batch_size, batch_size - 1)
+        gene_sim_off_diag = gene_sim_mat[mask].view(batch_size, batch_size - 1)
+
+        positive_gene_sim = F.relu(gene_sim_off_diag)  # Care more about similar genes
+        weights = torch.pow(
+            positive_gene_sim, self.alpha
+        )  # Alpha to increase the focus of weights
+
+        exp_pred_sim = torch.exp(pred_sim_off_diag)
+
+        # Weighted loss calculation
+
+        weighted_pos = (weights * exp_pred_sim).sum(dim=1)
+        total_sim = exp_pred_sim.sum(dim=1)
+
+        loss = -torch.log(weighted_pos / (total_sim + self.eps)).mean()
+
+        return loss
+
+
+class PerturbationSimilarityLoss(nn.Module):
+    """
+    Measuring perturbation similarity
+    """
+
+    def __init__(self, eps=1e-6, margin=1, reduction: str | None = "mean") -> None:
+        super(
+            PerturbationSimilarityLoss,
+            self,
+        ).__init__()
+        self.eps = eps
+        self.margin = margin
+        self.reduction = reduction
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        *args,
+        **kwargs,
+    ):
         pairwise_distances = torch.pdist(y_pred)
-        pairwise_distances = (pairwise_distances - pairwise_distances.mean()) / (
-            pairwise_distances.std() + self.eps
-        )
+        # pairwise_distances = (pairwise_distances - pairwise_distances.mean()) / (
+        #     pairwise_distances.std() + self.eps
+        # )
 
         gene_distances = torch.pdist(gene_embeddings)
-        gene_distances = (gene_distances - gene_distances.mean()) / (
-            gene_distances.std() + self.eps
-        )
+        # gene_distances = (gene_distances - gene_distances.mean()) / (
+        #     gene_distances.std() + self.eps
+        # )
 
         # calc = 1 - spearman_corrcoef(
         #     pairwise_distances, gene_distances
         # )  # Distance must be comparable to genes
 
-        calc = 1 - (
-            torch.cosine_similarity(pairwise_distances, gene_distances)
-        )  # MSE over the distances
+        # calc = torch.exp(-pairwise_distances) * gene_distances
 
-        return calc
+        # calc = 1 - pearson_corrcoef(pairwise_distances, gene_distances)
+        #
+
+        calc = (1 / (1 + pairwise_distances)) * gene_distances
+
+        match self.reduction:
+            case "sum":
+                return calc.sum()
+            case "mean":
+                return calc.mean()
+            case _:
+                return calc
 
 
 class BatchVariance(nn.Module):
@@ -411,7 +491,7 @@ class MDPLoss(nn.Module):
         self.weights = weights
         self.mse = torch.nn.MSELoss(reduction=reduction)
         self.diffexp = DiffExpError(reduction=reduction)
-        self.psl = PerturbationSimilarityLoss()
+        self.psl = WeightedContrastiveLoss()
 
     def forward(self, y_pred, y_true, **kwargs):
         mse_loss = self.mse.forward(y_pred, y_true)

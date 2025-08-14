@@ -64,7 +64,7 @@ class VCCModule(LightningModule):
         # self.train_corr = torchmetrics.SpearmanCorrCoef()
         self.train_genevar = lf.BatchVariance()
         self.train_diffexp = lf.DiffExpError()
-        self.train_psl = lf.PerturbationSimilarityLoss()
+        self.train_psl = lf.WeightedContrastiveLoss()
 
         self.val_mae = torchmetrics.MeanAbsoluteError()
         # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
@@ -72,7 +72,7 @@ class VCCModule(LightningModule):
         # self.val_corr = torchmetrics.SpearmanCorrCoef()
         self.val_genevar = lf.BatchVariance()
         self.val_diffexp = lf.DiffExpError()
-        self.val_psl = lf.PerturbationSimilarityLoss()
+        self.val_psl = lf.WeightedContrastiveLoss()
 
         self.test_mae = torchmetrics.MeanAbsoluteError()
         # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
@@ -80,7 +80,7 @@ class VCCModule(LightningModule):
         # self.test_corr = torchmetrics.SpearmanCorrCoef()
         self.test_genevar = lf.BatchVariance()
         self.test_diffexp = lf.DiffExpError()
-        self.test_psl = lf.PerturbationSimilarityLoss()
+        self.test_psl = lf.WeightedContrastiveLoss()
 
     def configure_optimizers(self):
         """Configuring the optimizers."""
