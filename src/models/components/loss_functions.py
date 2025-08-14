@@ -1,3 +1,5 @@
+from warnings import warn
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,7 +11,7 @@ class WeightedContrastiveLoss(nn.Module):
     perturbations
     """
 
-    def __init__(self, temperature: float = 0.1, alpha: float = 2.0, eps: float = 1e-8):
+    def __init__(self, temperature: float = 0.1, alpha: float = 2.0, eps: float = 1e-7):
         super(WeightedContrastiveLoss, self).__init__()
         self.temperature = temperature
         self.alpha = alpha
@@ -66,7 +68,12 @@ class WeightedContrastiveLoss(nn.Module):
         weighted_pos = (weights * exp_pred_sim).sum(dim=1)
         total_sim = exp_pred_sim.sum(dim=1)
 
-        loss = -torch.log(weighted_pos / (total_sim + self.eps)).mean()
+        if weighted_pos.sum() == 0 or total_sim.sum() == 0:
+            warn(
+                "Contrastive loss: One of the distance vectors sums to zero. loss will not be defined"
+            )
+
+        loss = -torch.log((weighted_pos + self.eps) / (total_sim + self.eps)).mean()
 
         return loss
 

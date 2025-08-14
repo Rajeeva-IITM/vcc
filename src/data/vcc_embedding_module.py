@@ -77,11 +77,11 @@ class VCCEmbeddingDataset(Dataset):
         #         {control_expression.shape[0], control_expression.shape[0], ko_gene_data.shape[0]}"
         #         )
 
-        self.control_expression = control_expression.to_numpy().astype(np.float16)
+        self.control_expression = control_expression.to_numpy().astype(np.float32)
         self.perturbed_genes = perturbed_genes
         self.gene_embeddings = gene_embeddings.to_pandas().set_index("gene_name")
         self.ko_expression = (
-            ko_expression.to_numpy().astype(np.float16)
+            ko_expression.to_numpy().astype(np.float32)
             if (ko_expression is not None)
             else None
         )
@@ -105,7 +105,7 @@ class VCCEmbeddingDataset(Dataset):
 
         exp_input = self.control_expression[index, :]
         genes = self.perturbed_genes[index]
-        gene_input = self.gene_embeddings.loc[genes].values.astype(np.float16)
+        gene_input = self.gene_embeddings.loc[genes].values.astype(np.float32)
 
         if self.stage == "predict":
             pred_input = []
