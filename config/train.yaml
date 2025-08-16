@@ -15,3 +15,4 @@ logging:
     job_type: VCC
 
 ckpt_path: null # In case one wants to resume training
+compile: true

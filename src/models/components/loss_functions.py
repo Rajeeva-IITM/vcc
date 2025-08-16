@@ -5,6 +5,89 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class MyMSELoss(nn.Module):
+    """
+    My MSE Loss
+    """
+
+    def __init__(self, reduction: str | None = "mean") -> None:
+        super(MyMSELoss, self).__init__()
+
+        self.reduction = reduction
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
+        """
+        Generic MSE Loss that will be more compatible with my Composite Loss class
+
+        Args:
+             y_pred (Tensor): Predicted expression
+             y_true (Tensor): True expression
+        Returns:
+             Tensor (loss)
+        """
+        calc = ((y_pred - y_true) ** 2).mean(dim=-1)
+
+        match self.reduction:
+            case "sum":
+                return calc.sum()
+            case "mean":
+                return calc.mean()
+            case _:
+                return calc
+
+
+class DiffExpAwareMSELoss(nn.Module):
+    """
+    An MSE loss that focuses on differentially expressed genes with due importance
+    to directionality. Adapted from https://www.nature.com/articles/s41587-023-01905-6
+    """
+
+    def __init__(self, beta: float = 1, reduction: str | None = "mean") -> None:
+        super(DiffExpAwareMSELoss, self).__init__()
+
+        self.beta = beta
+        self.reduction = reduction
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+        **kwargs,
+    ):
+        """
+        Calculate the Differential expression aware MSE Loss
+
+        Args:
+            y_pred (Tensor): Predicted expression
+            y_true (Tensor): True expression
+            control (Tensor): Control expression
+        """
+
+        # 1. Weighted MSE first
+        weights = torch.abs((y_true - control_exp))
+        # weights = weights * weights.mean(dim=-1).pow(-1).view(-1,1) # Normalize with mean
+        # weights = weights * 100 # fixed for now, must be a hyperparameter
+        mse_calc = (y_pred - y_true) ** 2
+        mse_calc = weights * (y_pred - y_true) ** 2
+        # print(mse_calc)
+
+        # 2. Direction control
+        direction_calc = (
+            torch.sign((y_true - control_exp)) - torch.sign((y_pred - control_exp))
+        ) ** 2
+
+        calc = mse_calc + (direction_calc * self.beta)
+
+        match self.reduction:
+            case "sum":
+                return calc.sum()
+            case "mean":
+                return calc.mean()
+            case _:
+                return calc
+
+
 class WeightedContrastiveLoss(nn.Module):
     """
     A weighted contrastive loss for ensuring model produces different embeddings for different genetic
@@ -22,7 +105,6 @@ class WeightedContrastiveLoss(nn.Module):
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         gene_embeddings: torch.Tensor,
-        *args,
         **kwargs,
     ):
         """
@@ -97,7 +179,6 @@ class PerturbationSimilarityLoss(nn.Module):
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         gene_embeddings: torch.Tensor,
-        *args,
         **kwargs,
     ):
         pairwise_distances = torch.pdist(y_pred)
@@ -139,7 +220,7 @@ class BatchVariance(nn.Module):
         super(BatchVariance, self).__init__()
         self.reduction = reduction
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
         """
         Calculate the variance of genes across a batch
 
@@ -178,7 +259,6 @@ class DiffExpError(nn.Module):
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         control_exp: torch.Tensor,
-        *args,
         **kwargs,
     ):
         """
@@ -216,7 +296,7 @@ class LogCoshError(nn.Module):
         super(LogCoshError, self).__init__()
         self.reduction = reduction
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
         """
         Calculate the error
 
@@ -261,7 +341,7 @@ class NegativeBinomialLoss(nn.Module):
         self.eps = eps
 
     def forward(
-        self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs
+        self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs
     ) -> torch.Tensor:
         """
         Calculates the Negative Binomial loss.
@@ -340,7 +420,7 @@ class MSLE(nn.Module):
 
         self.reduction = reduction
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
         """
         Forward pass
         """
@@ -387,7 +467,7 @@ class WeightedMAELoss(nn.Module):
             init_weights = torch.ones(num_genes)
         self.weights = nn.Parameter(init_weights)
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
         """
         Forward pass
         """
@@ -438,7 +518,7 @@ class CompositeLoss(nn.Module):
         self.loss_functions = loss_functions
         self.weights = weights
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, *args, **kwargs):
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
         """
         Computes a custom loss as a weighted sum of the constituent losses.
         Args:
@@ -451,7 +531,7 @@ class CompositeLoss(nn.Module):
         final_loss = 0
 
         for loss_function, weight in zip(self.loss_functions, self.weights):
-            final_loss += weight * loss_function.forward(y_pred, y_true)
+            final_loss += weight * loss_function.forward(y_pred, y_true, **kwargs)
 
         return final_loss
 
@@ -476,7 +556,7 @@ class MSEandDiffExpLoss(nn.Module):
         self.mse = torch.nn.MSELoss(reduction=reduction)
         self.diffexp = DiffExpError(reduction=reduction)
 
-    def forward(self, y_pred, y_true, *args, **kwargs):
+    def forward(self, y_pred, y_true, **kwargs):
         mse_loss = self.mse.forward(y_pred, y_true)
         diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
 

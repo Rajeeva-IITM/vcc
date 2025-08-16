@@ -30,6 +30,8 @@ def main(conf: DictConfig):
     console.log(f"Instantiating model: {conf.model._target_}")
 
     model: LightningModule = hydra.utils.instantiate(conf.model)
+    if conf.compile:
+        model.compile()
 
     console.log("Instantiating callbacks")
 
