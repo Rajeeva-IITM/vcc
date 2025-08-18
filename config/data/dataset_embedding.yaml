@@ -1,7 +1,7 @@
 datamodule:
   _target_: src.data.vcc_embedding_module.VCCDataModule
   train_exp_data_path: ${paths.data_dir}/log-processed-data/training_data-counts.parquet
-  gene_embedding_path: ${paths.data_dir}/gene_embeddings/PCA-train_expression.parquet
+  gene_embedding_path: ${paths.data_dir}/gene_embeddings/quantiles-train_expression.parquet
   train_ko_data_path: ${paths.data_dir}/processed-data/training_data-row_metadata.csv
   control_data_path: ${paths.data_dir}/log-processed-data/control_exp_data.parquet
   test_ko_data_path: ${paths.data_dir}/processed-data/pert_counts_Validation.csv
