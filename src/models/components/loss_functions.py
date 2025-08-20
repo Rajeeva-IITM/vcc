@@ -42,11 +42,14 @@ class DiffExpAwareMSELoss(nn.Module):
     to directionality. Adapted from https://www.nature.com/articles/s41587-023-01905-6
     """
 
-    def __init__(self, beta: float = 1, reduction: str | None = "mean") -> None:
+    def __init__(
+        self, alpha: float = 1, beta: float = 1, reduction: str | None = "mean"
+    ) -> None:
         super(DiffExpAwareMSELoss, self).__init__()
 
         self.beta = beta
         self.reduction = reduction
+        self.alpha = alpha
 
     def forward(
         self,
@@ -65,7 +68,7 @@ class DiffExpAwareMSELoss(nn.Module):
         """
 
         # 1. Weighted MSE first
-        weights = torch.abs((y_true - control_exp))
+        weights = torch.abs((y_true - control_exp)) ** self.alpha
         # weights = weights * weights.mean(dim=-1).pow(-1).view(-1,1) # Normalize with mean
         # weights = weights * 100 # fixed for now, must be a hyperparameter
         mse_calc = (y_pred - y_true) ** 2

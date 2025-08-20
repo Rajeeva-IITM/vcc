@@ -31,7 +31,7 @@ def main(conf: DictConfig):
 
     model: LightningModule = hydra.utils.instantiate(conf.model)
     if conf.compile:
-        model.compile()
+        model.compile(mode="reduce-overhead")
 
     console.log("Instantiating callbacks")
 

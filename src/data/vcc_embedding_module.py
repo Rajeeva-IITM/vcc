@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 import polars.selectors as cs
 import rich
+import torch
 from icecream import ic
 from lightning.pytorch import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -77,11 +78,13 @@ class VCCEmbeddingDataset(Dataset):
         #         {control_expression.shape[0], control_expression.shape[0], ko_gene_data.shape[0]}"
         #         )
 
-        self.control_expression = control_expression.to_numpy().astype(np.float32)
+        self.control_expression = torch.from_numpy(control_expression.to_numpy()).to(
+            torch.float32
+        )
         self.perturbed_genes = perturbed_genes
         self.gene_embeddings = gene_embeddings.to_pandas().set_index("gene_name")
         self.ko_expression = (
-            ko_expression.to_numpy().astype(np.float32)
+            torch.from_numpy(ko_expression.to_numpy()).to(torch.float32)
             if (ko_expression is not None)
             else None
         )
@@ -98,19 +101,25 @@ class VCCEmbeddingDataset(Dataset):
 
     def __getitem__(
         self, index: int
-    ) -> tuple[dict[str, np.ndarray], np.ndarray | list]:
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor | list]:
         """
         Retrieves a single data sample
         """
 
         exp_input = self.control_expression[index, :]
         genes = self.perturbed_genes[index]
-        gene_input = self.gene_embeddings.loc[genes].values.astype(np.float32)
+        gene_input = torch.from_numpy(self.gene_embeddings.loc[genes].values).to(
+            torch.float32
+        )
 
         if self.stage == "predict":
             pred_input = []
         else:
-            pred_input = self.ko_expression[index, :]
+            pred_input = (
+                self.ko_expression[index, :]
+                if self.ko_expression is not None
+                else [None]
+            )
 
         return {"ko_vec": gene_input, "exp_vec": exp_input}, pred_input
 
