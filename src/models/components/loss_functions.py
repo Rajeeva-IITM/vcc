@@ -68,7 +68,10 @@ class DiffExpAwareMSELoss(nn.Module):
         """
 
         # 1. Weighted MSE first
-        weights = torch.abs((y_true - control_exp)) ** self.alpha
+        weights = torch.abs((y_true - control_exp))
+        weights = (weights - weights.min()) / (
+            weights.max() - weights.min()
+        ) ** self.alpha
         # weights = weights * weights.mean(dim=-1).pow(-1).view(-1,1) # Normalize with mean
         # weights = weights * 100 # fixed for now, must be a hyperparameter
         mse_calc = (y_pred - y_true) ** 2

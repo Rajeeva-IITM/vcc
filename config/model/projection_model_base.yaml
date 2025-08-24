@@ -43,9 +43,9 @@ primary_loss:
     - 0.2
 contrastive_loss:
   _target_: src.models.components.loss_functions.WeightedContrastiveLoss
-  alpha: 2
+  alpha: 1
   temperature: 0.1
-contrastive_weight: 1
+contrastive_weight: 30
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true

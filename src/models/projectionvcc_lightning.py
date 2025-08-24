@@ -224,6 +224,8 @@ class VCCModule(LightningModule):
         diff_exp = self.val_diffexp.forward(y_pred, y, X["exp_vec"])
         psl = self.val_psl.forward(latent, y, X["ko_vec"])
 
+        self.log("val/loss", loss)
+
         self.log(
             "val/primary_loss",
             primary_loss,
