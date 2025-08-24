@@ -214,6 +214,80 @@ class CellModel(nn.Module):
         return output
 
 
+class ProjectorCellModel(nn.Module):
+    """
+    Same class as above but includes a projector for perturbation losses.
+    Based on experiments, ignoring the fused_processor. The output of the
+    ko-processor will be used for the projector head.
+    """
+
+    def __init__(
+        self,
+        ko_processor_args: dict[str, Any],
+        exp_processor_args: dict[str, Any],
+        projector_args: dict[str, Any],
+        decoder_args: dict[str, Any],
+        fusion_type: Literal["sum", "product", "concat", "bilinear"],
+    ):
+        super().__init__()
+
+        self.ko_processor = ProcessingNN(**ko_processor_args)
+        self.exp_processor = ProcessingNN(**exp_processor_args)
+        self.projector = ProcessingNN(**projector_args)
+        self.decoder = ProcessingNN(**decoder_args)
+        self.fusion = fusion_type
+        if self.fusion == "bilinear":
+            self.bilinear = nn.Bilinear(
+                in1_features=ko_processor_args["output_size"],
+                in2_features=exp_processor_args["output_size"],
+                out_features=decoder_args["input_size"],
+            )
+
+    def forward(self, inputs: dict[str, torch.Tensor]):
+        """
+        Performs a forward pass through the model using the provided input tensors.
+        Args:
+            inputs (Dict[str, torch.Tensor]): A dictionary containing input tensors with keys "ko_vec" and "exp_vec".
+        Returns:
+            torch.Tensor: The output tensor produced by the model.
+        """
+
+        ko_vec: torch.Tensor = inputs["ko_vec"]
+        exp_vec: torch.Tensor = inputs["exp_vec"]
+
+        ko_processed = self.ko_processor.forward(ko_vec)
+        exp_processed = self.exp_processor.forward(exp_vec)
+
+        # Fusing the two representations
+        match self.fusion:
+            case "sum":
+                fused_representaion = (
+                    ko_processed + exp_processed
+                )  # Ensure they are of same size
+
+            case "product":
+                fused_representaion = (
+                    ko_processed * exp_processed
+                )  # Ensure they are of same size
+
+            case "concat":
+                fused_representaion = torch.cat([ko_processed, exp_processed], dim=1)
+
+            case "bilinear":
+                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
+
+            case _:
+                raise ValueError(
+                    "fusion_type should be one of ['sum','product','cross_attn', 'bilinear']"
+                )
+
+        latent = self.projector.forward(ko_processed)
+
+        output = self.decoder.forward(fused_representaion)
+
+        return output, latent
+
+
 if __name__ == "__main__":
     # Testing
     # Example arguments for each processor
