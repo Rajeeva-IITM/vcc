@@ -100,11 +100,62 @@ class WeightedContrastiveLoss(nn.Module):
     perturbations
     """
 
-    def __init__(self, temperature: float = 0.1, alpha: float = 2.0, eps: float = 1e-7):
+    def __init__(
+        self,
+        temperature: float = 0.1,
+        alpha: float = 2.0,
+        eps: float = 1e-7,
+        gene_hyperbolic=False,
+        hyperbolic_similarity_scale=1,
+    ):
         super(WeightedContrastiveLoss, self).__init__()
         self.temperature = temperature
         self.alpha = alpha
         self.eps = eps
+        self.gene_hyperbolic = gene_hyperbolic
+        self.hyperbolic_scale = hyperbolic_similarity_scale
+
+    def _cosine_distance(self, u: torch.Tensor, v: torch.Tensor):
+        u_norm = F.normalize(u, dim=-1)
+        v_norm = F.normalize(v, dim=-1)
+        similarity = torch.matmul(u_norm, v_norm.T)
+
+        return similarity
+
+    def _pairwise_poincare_similarity(self, X: torch.Tensor):
+        """
+        Calculates the pairwise Poincaré similarity between all vectors in a single batch.
+
+        Args:
+            X (torch.Tensor): A tensor of shape (batch_size, embedding_dim).
+
+        Returns:
+            torch.Tensor: A tensor of shape (batch_size, batch_size) of distances.
+        """
+        # Use broadcasting to compute all pairs of differences
+        # X_row becomes (batch_size, 1, embedding_dim)
+        # X_col becomes (1, batch_size, embedding_dim)
+        X_row = X.unsqueeze(1)
+        X_col = X.unsqueeze(0)
+
+        sq_dist = torch.sum((X_row - X_col) ** 2, dim=-1)
+
+        # Norms need to be broadcastable as well
+        sq_norm = torch.sum(X**2, dim=-1)
+        sq_norm_row = sq_norm.unsqueeze(1)
+        sq_norm_col = sq_norm.unsqueeze(0)
+
+        # The formula for hyperbolic distance
+        numerator = 2 * sq_dist
+        denominator = (1 - sq_norm_row) * (1 - sq_norm_col)
+
+        arccosh_arg = 1 + numerator / (denominator + self.eps)
+        arccosh_arg = torch.clamp(arccosh_arg, min=1.0 + self.eps)
+
+        distance_matrix = torch.acosh(arccosh_arg)
+        similarity_matrix = 2 * torch.exp(-distance_matrix * self.hyperbolic_scale) - 1
+
+        return similarity_matrix
 
     def forward(
         self,
@@ -128,15 +179,19 @@ class WeightedContrastiveLoss(nn.Module):
         batch_size = y_pred.shape[0]
         device = y_pred.device
 
-        pred_norm = F.normalize(y_pred, dim=-1)
-        gene_norm = F.normalize(gene_embeddings, dim=-1)
-
         # Calculate cosine distances
 
         pred_sim_mat = (
-            torch.matmul(pred_norm, pred_norm.T) / self.temperature
+            self._cosine_distance(y_pred, y_pred) / self.temperature
         )  # Temperature to scale the distances
-        gene_sim_mat = torch.matmul(gene_norm, gene_norm.T)
+        if not self.gene_hyperbolic:
+            gene_sim_mat = self._cosine_distance(gene_embeddings, gene_embeddings)
+        elif self.gene_hyperbolic:
+            gene_sim_mat = self._pairwise_poincare_similarity(gene_embeddings)
+        else:
+            raise ValueError(
+                "Invalid value for gene_hyperbolic. Must be boolean. You are idiot"
+            )
 
         # Removing diagonal
 
