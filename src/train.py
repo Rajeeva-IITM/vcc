@@ -1,11 +1,15 @@
 import hydra
 import lightning
+import matplotlib.pyplot as plt
 import rich
 import rootutils
+import seaborn as sns
 import torch
 import wandb
 from lightning import LightningDataModule, LightningModule, Trainer
 from omegaconf import DictConfig, OmegaConf
+from PIL import Image
+from umap import UMAP
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
 torch.cuda.empty_cache()
@@ -39,7 +43,9 @@ def main(conf: DictConfig):
 
     console.log(f"Instantiating Logger: {conf.logging.wandb._target_}")
 
-    logger = hydra.utils.instantiate(conf.logging.wandb)
+    logger: lightning.pytorch.loggers.WandbLogger = hydra.utils.instantiate(
+        conf.logging.wandb
+    )
     logger.experiment.config.update(OmegaConf.to_container(conf))
 
     console.log(f"Instantiating Trainer: {conf.trainer._target_}")
@@ -49,6 +55,24 @@ def main(conf: DictConfig):
     )
 
     trainer.fit(model, datamodule, ckpt_path=conf.get("ckpt_path"))
+
+    try:
+        save_path = conf.callbacks.model_checkpoint.dirpath
+        console.log("Prediction and quick evaluation")
+        preds: list[torch.Tensor] = trainer.predict(model, datamodule)
+        y_pred = torch.cat(preds)
+        torch.save(y_pred, save_path + "/predictions.pt")
+        console.log("Running UMAP")
+        reducer = UMAP(n_neighbors=50)
+        reduced = reducer.fit_transform(y_pred)
+        sns.scatterplot(
+            x=reduced[:, 0], y=reduced[:, 1], hue=datamodule.test_data.perturbed_genes
+        )
+        plt.legend(bbox_to_anchor=(1, 1), ncols=3)
+        plt.savefig(save_path + "/umap_plot.png", dpi=300, bbox_inches="tight")
+        logger.log_image("UMAP-plot", Image.open(save_path + "/umap_plot.png"))
+    except Exception as e:
+        console.log(f"There was this error: {e}")
     wandb.finish()
 
 
