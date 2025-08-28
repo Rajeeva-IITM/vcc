@@ -38,7 +38,8 @@ class ProcessingNN(
     def __init__(
         self,
         input_size: int,
-        hidden_layers: list[int],
+        hidden_size: int,
+        num_hidden_layers: int,
         output_size: int,  # Embedding size
         dropout: float,
         activation: str | nn.Module,
@@ -57,7 +58,9 @@ class ProcessingNN(
         super().__init__()
 
         self.input_size = input_size
-        self.hidden_layers = hidden_layers
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.hidden_layers = [hidden_size for _ in range(num_hidden_layers)]
         self.output_size = output_size
         self.dropout = dropout
         self.activation = (
@@ -72,32 +75,38 @@ class ProcessingNN(
             self.sequence.append(nn.Identity())
 
         else:
-            self.projection = nn.Linear(self.input_size, self.output_size)
-
-            self.layers = [self.output_size] + self.hidden_layers + [self.output_size]  # type: ignore
-            if len(self.layers) == 2:  # Makes two layers
+            # self.layers = [self.hidden_size] + self.hidden_layers + [self.output_size]  # type: ignore
+            if len(self.hidden_layers) == 2:  # Makes two layers
                 # No hidden layers: just input -> output
-                self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
-                self.sequence.append(
-                    nn.Linear(self.layers[0], self.layers[1], dtype=torch.float)
-                )
-                self.sequence.append(self.activation)
+                # self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
+                # self.sequence.append(
+                #     nn.Linear(self.layers[0], self.layers[1], dtype=torch.float)
+                # )
+                self.projection = nn.Linear(self.input_size, self.hidden_size)
+                self.normalization = nn.LayerNorm(self.hidden_size)
+                self.sequence.append(nn.Identity())
+                self.output_projection = nn.Linear(self.hidden_size, self.output_size)
+                self.positive_enforcer = nn.ReLU()  # Enforces positive values (since we predicting log transformed counts)
+                # self.sequence.append(self.activation)
             else:
-                self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
-
-                for i in range(len(self.layers) - 2):
+                self.projection = nn.Linear(self.input_size, self.hidden_size)
+                self.normalization = nn.LayerNorm(self.hidden_size)
+                for i in range(len(self.hidden_layers) - 1):
                     self.sequence.append(
-                        nn.Linear(self.layers[i], self.layers[i + 1], dtype=torch.float)
+                        nn.Linear(
+                            self.hidden_layers[i],
+                            self.hidden_layers[i + 1],
+                            dtype=torch.float,
+                        )
                     )
                     self.sequence.append(self.activation)
 
                 self.sequence.append(nn.Dropout(self.dropout))
-                self.sequence.append(
-                    nn.Linear(self.layers[-2], self.layers[-1], dtype=torch.float)
-                )
-                self.sequence.append(self.activation)
+                self.output_projection = nn.Linear(self.hidden_size, self.output_size)
+                self.positive_enforcer = nn.ReLU()
+                # self.sequence.append(self.activation)
 
-        self.sequence = nn.Sequential(*self.sequence)
+        self.process_sequence = nn.Sequential(*self.sequence)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """This function takes in an input tensor `x` and passes it through the neural network's
@@ -114,15 +123,36 @@ class ProcessingNN(
             The output tensor produced by the forward pass through the network's layers.
         """
 
-        if self.no_processing:
-            return self.sequence(x)
+        projection = self.projection.forward(
+            x
+        )  # shape batch x input_size -> batch x hidden_size
 
-        input = self.projection(x)
+        if self.no_processing:
+            return self.process_sequence(x)
 
         if self.residual_connection:
-            return self.sequence(input) + input  # type: ignore
+            # Normalize and then pass through hidden layers - shape batch x hidden_size -> batch x hidden_size
+            processed_through_sequence: torch.Tensor = self.process_sequence.forward(
+                self.normalization(projection)
+            )
+            # Project to output and enforce positivity - shape batch x hidden_size x batch x output_size
+            output = self.positive_enforcer.forward(
+                self.output_projection.forward(processed_through_sequence + projection)
+            )
+
+            return output
+
         else:
-            return self.sequence(input)
+            # Normalize and then pass through hidden layers - shape batch x hidden_size -> batch x hidden_size
+            processed_through_sequence: torch.Tensor = self.process_sequence.forward(
+                self.normalization(projection)
+            )
+            # Project to output and enforce positivity - shape batch x hidden_size x batch x output_size
+            output = self.positive_enforcer.forward(
+                self.output_projection.forward(processed_through_sequence)
+            )
+
+            return output
 
 
 class CellModel(nn.Module):
@@ -278,10 +308,10 @@ class ProjectorCellModel(nn.Module):
 
             case _:
                 raise ValueError(
-                    "fusion_type should be one of ['sum','product','cross_attn', 'bilinear']"
+                    "fusion_type should be one of ['sum','product','concat', 'bilinear']"
                 )
 
-        latent = self.projector.forward(ko_processed)
+        latent = self.projector.forward(fused_representaion)
 
         output = self.decoder.forward(fused_representaion)
 

@@ -13,5 +13,5 @@ datamodule:
 
 metadata:
   groupname: VCC
-  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M} # Always with respect to the top config
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S} # Always with respect to the top config
 #

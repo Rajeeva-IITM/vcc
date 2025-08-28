@@ -1,15 +1,11 @@
 import hydra
 import lightning
-import matplotlib.pyplot as plt
 import rich
 import rootutils
-import seaborn as sns
 import torch
 import wandb
 from lightning import LightningDataModule, LightningModule, Trainer
 from omegaconf import DictConfig, OmegaConf
-from PIL import Image
-from umap import UMAP
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
 torch.cuda.empty_cache()
@@ -60,17 +56,22 @@ def main(conf: DictConfig):
         save_path = conf.callbacks.model_checkpoint.dirpath
         console.log("Prediction and quick evaluation")
         preds: list[torch.Tensor] = trainer.predict(model, datamodule)
+        if (
+            len(preds[0]) == 2
+        ):  # For the case where both final prediction and the projector info is given
+            preds = [pred[0] for pred in preds]
         y_pred = torch.cat(preds)
+        console.log(f"Predicted expression shape: {y_pred.shape}")
         torch.save(y_pred, save_path + "/predictions.pt")
-        console.log("Running UMAP")
-        reducer = UMAP(n_neighbors=50)
-        reduced = reducer.fit_transform(y_pred)
-        sns.scatterplot(
-            x=reduced[:, 0], y=reduced[:, 1], hue=datamodule.test_data.perturbed_genes
-        )
-        plt.legend(bbox_to_anchor=(1, 1), ncols=3)
-        plt.savefig(save_path + "/umap_plot.png", dpi=300, bbox_inches="tight")
-        logger.log_image("UMAP-plot", Image.open(save_path + "/umap_plot.png"))
+        # console.log("Running UMAP")
+        # reducer = UMAP(n_neighbors=50)
+        # reduced = reducer.fit_transform(y_pred)
+        # sns.scatterplot(
+        #     x=reduced[:, 0], y=reduced[:, 1], hue=datamodule.test_data.perturbed_genes
+        # )
+        # plt.legend(bbox_to_anchor=(1, 1), ncols=3)
+        # plt.savefig(save_path + "/umap_plot.png", dpi=300, bbox_inches="tight")
+        # logger.log_image("UMAP-plot", Image.open(save_path + "/umap_plot.png"))
     except Exception as e:
         console.log(f"There was this error: {e}")
     wandb.finish()

@@ -4,33 +4,37 @@ net:
   _target_: src.models.components.basic_vcc_model.ProjectorCellModel
   ko_processor_args:
     input_size: 256
-    hidden_layers: [512,512,512]
+    hidden_size: 512
+    num_hidden_layers: 3
     output_size: 256
     dropout: 0.0
     activation: relu
     # no_processing: true
   exp_processor_args:
     input_size: 18080
-    hidden_layers: [512,512,512]
+    hidden_size: 512
+    num_hidden_layers: 4
     output_size: 256
     dropout: 0.0
     activation: relu
     # no_processing: true
   projector_args:
     input_size: 256
-    hidden_layers: [256, 128]
+    hidden_size: 128
+    num_hidden_layers: 2
     output_size: 64
     dropout: 0.0
     activation: relu
-    residual_connection: false # Avoids negative values
+    residual_connection: false
     # no_processing: true
   decoder_args:
-    input_size: 128
-    hidden_layers: [512, 1024, 2048, 4096]
+    input_size: 256
+    hidden_size: 1024
+    num_hidden_layers: 4
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: relu
-    residual_connection: false # Avoids negative values
+    residual_connection: True # Avoids negative values
   fusion_type: bilinear
 primary_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
@@ -45,8 +49,8 @@ contrastive_loss:
   _target_: src.models.components.loss_functions.WeightedContrastiveLoss
   alpha: 2
   temperature: 0.1
-  gene_hyperbolic: true # Indicating hyperbolic embedding
-contrastive_weight: 10
+  # gene_hyperbolic: true # Indicating hyperbolic embedding
+contrastive_weight: 1
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true

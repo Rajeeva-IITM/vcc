@@ -378,9 +378,9 @@ class VCCModule(LightningModule):
 
     def predict_step(self, batch, batch_ix):
         X, _ = batch
-        y_pred, _ = self.forward(X)
+        y_pred, projection = self.forward(X)
 
-        return y_pred
+        return y_pred, projection
 
     @override
     def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
