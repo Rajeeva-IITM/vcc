@@ -123,12 +123,12 @@ class ProcessingNN(
             The output tensor produced by the forward pass through the network's layers.
         """
 
+        if self.no_processing:
+            return self.process_sequence(x)
+
         projection = self.projection.forward(
             x
         )  # shape batch x input_size -> batch x hidden_size
-
-        if self.no_processing:
-            return self.process_sequence(x)
 
         if self.residual_connection:
             # Normalize and then pass through hidden layers - shape batch x hidden_size -> batch x hidden_size

@@ -3,32 +3,37 @@ net:
   _target_: src.models.components.basic_vcc_model.CellModel
   ko_processor_args:
     input_size: 256
-    hidden_layers: [512,512,512]
+    hidden_size: 512
+    num_hidden_layers: 3
     output_size: 256
-    dropout: 0.15
+    dropout: 0.0
     activation: relu
     # no_processing: true
   exp_processor_args:
     input_size: 18080
-    hidden_layers: [512,512,512]
+    hidden_size: 512
+    num_hidden_layers: 4
     output_size: 256
-    dropout: 0.15
+    dropout: 0.0
     activation: relu
     # no_processing: true
   fused_processor_args:
-    input_size: 768
-    hidden_layers: [512, 256]
+    input_size: 256
+    hidden_size: 128
+    num_hidden_layers: 2
     output_size: 256
-    dropout: 0.15
+    dropout: 0.0
     activation: relu
+    residual_connection: false
     no_processing: true
   decoder_args:
-    input_size: ${model.net.fused_processor_args.output_size}
-    hidden_layers: [512, 1024, 2048, 4096]
+    input_size: 256
+    hidden_size: 1024
+    num_hidden_layers: 4
     output_size: ${model.net.exp_processor_args.input_size}
-    dropout: 0.15
+    dropout: 0.0
     activation: relu
-    residual_connection: false # Avoids negative values
+    residual_connection: True # Avoids negative values
   fusion_type: bilinear
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
@@ -38,11 +43,12 @@ loss_fn:
     - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
       alpha: 0.5
       temperature: 0.05
+      gene_hyperbolic: true
     - _target_: src.models.components.loss_functions.MyMSELoss
   weights:
     - 1
-    - 1
-    - 1
+    - 0.5
+    - 0.25
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
