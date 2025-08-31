@@ -226,13 +226,12 @@ class PerturbationSimilarityLoss(nn.Module):
     Measuring perturbation similarity
     """
 
-    def __init__(self, eps=1e-6, margin=1, reduction: str | None = "mean") -> None:
+    def __init__(self, eps=1e-6, reduction: str | None = "mean") -> None:
         super(
             PerturbationSimilarityLoss,
             self,
         ).__init__()
         self.eps = eps
-        self.margin = margin
         self.reduction = reduction
 
     def forward(
@@ -243,25 +242,10 @@ class PerturbationSimilarityLoss(nn.Module):
         **kwargs,
     ):
         pairwise_distances = torch.pdist(y_pred)
-        # pairwise_distances = (pairwise_distances - pairwise_distances.mean()) / (
-        #     pairwise_distances.std() + self.eps
-        # )
 
         gene_distances = torch.pdist(gene_embeddings)
-        # gene_distances = (gene_distances - gene_distances.mean()) / (
-        #     gene_distances.std() + self.eps
-        # )
 
-        # calc = 1 - spearman_corrcoef(
-        #     pairwise_distances, gene_distances
-        # )  # Distance must be comparable to genes
-
-        # calc = torch.exp(-pairwise_distances) * gene_distances
-
-        # calc = 1 - pearson_corrcoef(pairwise_distances, gene_distances)
-        #
-
-        calc = (1 / (1 + pairwise_distances)) * gene_distances
+        calc = F.cosine_similarity(pairwise_distances, gene_distances)
 
         match self.reduction:
             case "sum":

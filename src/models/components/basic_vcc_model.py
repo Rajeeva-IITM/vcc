@@ -8,7 +8,6 @@ from src.utils.process_activation_function import get_activation
 # Contains
 # Knockdown information vector processing
 # Gene expression vector processing
-# Encoder of concatenated parts
 # Decoder of encoded parts
 
 
@@ -21,8 +20,10 @@ class ProcessingNN(
     ----------
     input_size : int
         Input size
-    hidden_layers: List[int]
-        Sizes of the hidden layers
+    hidden_size: int
+        Size of the hidden layers
+    num_hidden_layers:
+        Number of hidden layers
     output_size : int
         Output size
     dropout : float
@@ -33,6 +34,8 @@ class ProcessingNN(
         Flag to indicate if one wants this component to do nothing
     residual_connection: bool, defaults to True
         Whether to include residual connections in the model.
+    ensure_output_positive: bool, defaults to False
+        Self explanatory
     """
 
     def __init__(
@@ -45,6 +48,7 @@ class ProcessingNN(
         activation: str | nn.Module,
         no_processing: bool = False,
         residual_connection: bool = True,
+        ensure_output_positive: bool = False,
     ):
         # if len(hidden_layers) < 1:
         #     raise ValueError("Number of layers must be greater than 1.")
@@ -68,6 +72,7 @@ class ProcessingNN(
         )
         self.residual_connection = residual_connection
         self.no_processing = no_processing
+        self.ensure_output_positive = ensure_output_positive
 
         self.sequence = []  # Sequence of layers
 
@@ -75,22 +80,10 @@ class ProcessingNN(
             self.sequence.append(nn.Identity())
 
         else:
-            # self.layers = [self.hidden_size] + self.hidden_layers + [self.output_size]  # type: ignore
             if len(self.hidden_layers) == 2:  # Makes two layers
                 # No hidden layers: just input -> output
-                # self.sequence.append(nn.LayerNorm(self.layers[0]))  # pre-normalization
-                # self.sequence.append(
-                #     nn.Linear(self.layers[0], self.layers[1], dtype=torch.float)
-                # )
-                self.projection = nn.Linear(self.input_size, self.hidden_size)
-                self.normalization = nn.LayerNorm(self.hidden_size)
                 self.sequence.append(nn.Identity())
-                self.output_projection = nn.Linear(self.hidden_size, self.output_size)
-                self.positive_enforcer = nn.ReLU()  # Enforces positive values (since we predicting log transformed counts)
-                # self.sequence.append(self.activation)
             else:
-                self.projection = nn.Linear(self.input_size, self.hidden_size)
-                self.normalization = nn.LayerNorm(self.hidden_size)
                 for i in range(len(self.hidden_layers) - 1):
                     self.sequence.append(
                         nn.Linear(
@@ -102,11 +95,20 @@ class ProcessingNN(
                     self.sequence.append(self.activation)
 
                 self.sequence.append(nn.Dropout(self.dropout))
-                self.output_projection = nn.Linear(self.hidden_size, self.output_size)
-                self.positive_enforcer = nn.ReLU()
-                # self.sequence.append(self.activation)
 
-        self.process_sequence = nn.Sequential(*self.sequence)
+            self.projection = nn.Linear(self.input_size, self.hidden_size)  # Step 1
+            self.normalization = nn.LayerNorm(self.hidden_size)  # Step 2
+            self.output_projection = nn.Linear(
+                self.hidden_size, self.output_size
+            )  # Step 4
+            if (
+                self.ensure_output_positive
+            ):  # if we want to ensure our outputs are positive
+                self.positive_enforcer = nn.ReLU()  # Step 5 # maybe
+            else:
+                self.positive_enforcer = nn.Identity()
+
+        self.process_sequence = nn.Sequential(*self.sequence)  # Step 3
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """This function takes in an input tensor `x` and passes it through the neural network's
