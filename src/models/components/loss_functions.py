@@ -3,6 +3,7 @@ from warnings import warn
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchmetrics
 
 
 class MyMSELoss(nn.Module):
@@ -245,7 +246,9 @@ class PerturbationSimilarityLoss(nn.Module):
 
         gene_distances = torch.pdist(gene_embeddings)
 
-        calc = F.cosine_similarity(pairwise_distances, gene_distances)
+        calc = 1 - torchmetrics.functional.spearman_corrcoef(
+            pairwise_distances, gene_distances
+        )
 
         match self.reduction:
             case "sum":

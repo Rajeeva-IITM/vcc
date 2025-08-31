@@ -33,7 +33,7 @@ net:
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
     activation: gelu
-    residual_connection: True # Avoids negative values
+    residual_connection: True
     ensure_output_positive: True
   fusion_type: bilinear
 primary_loss:
@@ -42,7 +42,7 @@ primary_loss:
     - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
       beta: 1
     - _target_: src.models.components.loss_functions.MyMSELoss
-    - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
+    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
   weights:
     - 1
     - 0.2
