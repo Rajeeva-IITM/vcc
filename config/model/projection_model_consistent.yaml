@@ -1,0 +1,70 @@
+_target_: src.models.projectionvcc_lightning.VCCModulewithConsistency
+net:
+  _target_: src.models.components.basic_vcc_model.ProjectorCellModel
+  ko_processor_args:
+    input_size: 256
+    hidden_size: 512
+    num_hidden_layers: 3
+    output_size: 256
+    dropout: 0.0
+    activation: gelu
+    # no_processing: true
+  exp_processor_args:
+    input_size: 18080
+    hidden_size: 512
+    num_hidden_layers: 4
+    output_size: 256
+    dropout: 0.0
+    activation: gelu
+    # no_processing: true
+  projector_args:
+    input_size: 256
+    hidden_size: 128
+    num_hidden_layers: 2
+    output_size: 64
+    dropout: 0.0
+    activation: gelu
+    residual_connection: false
+    # no_processing: true
+  decoder_args:
+    input_size: 256
+    hidden_size: 2048
+    num_hidden_layers: 5
+    output_size: ${model.net.exp_processor_args.input_size}
+    dropout: 0.0
+    activation: gelu
+    residual_connection: True
+    ensure_output_positive: True
+  fusion_type: bilinear
+primary_loss:
+  _target_: src.models.components.loss_functions.CompositeLoss
+  loss_functions:
+    - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+      alpha: 2
+      beta: 1
+    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
+  weights:
+    - 1
+    - 0.5
+    # - 0.1
+contrastive_loss:
+  _target_: src.models.components.loss_functions.WeightedContrastiveLoss
+  alpha: 2
+  temperature: 0.1
+  # gene_hyperbolic: true # Indicating hyperbolic embedding
+contrastive_weight: 1
+consistency_loss:
+  _target_: torch.nn.MSELoss
+consistency_loss_weight: 0.5
+control_std: ${paths.data_dir}/log-processed-data/control_expression_std.pt
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-5
+  weight_decay: 1e-5
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  _partial_: true
+  T_0: 5
+  T_mult: 2
