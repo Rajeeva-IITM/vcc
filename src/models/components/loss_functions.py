@@ -3,7 +3,120 @@ from warnings import warn
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_scatter
 import torchmetrics
+
+
+class HybridGeneLoss(nn.Module):
+    """
+    A hybrid loss function that combines a differential expression-aware
+    MSE with a soft similarity loss to train on both absolute values
+    and relative gene importance.
+    """
+
+    def __init__(
+        self,
+        alpha: float = 1.0,
+        temperature: float = 1.0,
+        gamma: float = 0.5,
+        reduction: str = "mean",
+    ) -> None:
+        """
+        Args:
+            alpha (float): Exponent for MSE weighting. Higher values focus more
+                         on the most differentially expressed genes.
+            temperature (float): Temperature for the softmax in the similarity loss.
+                               Lower values create a sharper distribution.
+            gamma (float): A blending factor between 0 and 1. It controls the
+                         strength of the two topk component
+                         loss = weighted_mse + gamma * similarity_loss
+            reduction (str): Reduction to apply to the final loss ('mean' or 'sum').
+        """
+        super(HybridGeneLoss, self).__init__()
+        self.alpha = alpha
+        self.temperature = temperature
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+    ) -> torch.Tensor:
+        # --- 1. Weighted MSE Component ---
+        with torch.no_grad():  # Weights are based on ground truth, no gradient needed
+            weights = torch.abs(y_true - control_exp)
+            # Min-max scale the weights to [0, 1]
+            w_min = torch.min(weights, dim=-1, keepdim=True)[0]
+            w_max = torch.max(weights, dim=-1, keepdim=True)[0]
+            weights = (weights - w_min) / (w_max - w_min + 1e-8)
+            weights = weights**self.alpha
+
+        mse_loss = weights * F.mse_loss(y_pred, y_true, reduction="none")
+
+        # --- 2. Soft Similarity Component ---
+        # Calculate LFCs (adding a small epsilon for numerical stability)
+        epsilon = 1e-8
+        predicted_lfc = torch.log2((y_pred + epsilon) / (control_exp + epsilon))
+        true_lfc = torch.log2((y_true + epsilon) / (control_exp + epsilon))
+
+        pred_abs = torch.abs(predicted_lfc)
+        true_abs = torch.abs(true_lfc)
+
+        pred_weights = F.softmax(pred_abs / self.temperature, dim=-1)
+        true_weights = F.softmax(true_abs / self.temperature, dim=-1)
+
+        similarity = F.cosine_similarity(pred_weights, true_weights, dim=-1)
+        similarity_loss = 1 - similarity
+
+        # --- 3. Combine the Losses ---
+        # The loss for each item in the batch
+        combined_loss = mse_loss.mean(dim=-1) + (self.gamma * similarity_loss)
+
+        # Apply final reduction
+        if self.reduction == "mean":
+            return combined_loss.mean()
+        elif self.reduction == "sum":
+            return combined_loss.sum()
+        else:
+            return combined_loss
+
+
+class GenewiseMSELoss(nn.Module):
+    """
+    A macro-averaged MSE loss so that all genes are equally given importance to
+    """
+
+    def __init__(self, reduction: str | None = "mean") -> None:
+        super(GenewiseMSELoss, self).__init__()
+
+        self.reduction = reduction
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        *args,
+        **kwargs,
+    ):
+        """
+        MSE loss but each gene perturbation is treated equally and calculated separately
+        and then averaged.
+        """
+
+        _, indices = gene_embeddings.unique(return_inverse=True, dim=0)
+        diff = F.mse_loss(y_pred, y_true, reduction="none").mean(-1).view(-1)
+        calc = torch_scatter.scatter_mean(diff, indices, dim=0)
+
+        match self.reduction:
+            case "sum":
+                return calc.sum()
+            case "mean":
+                return calc.mean()
+            case _:
+                return calc
 
 
 class MyMSELoss(nn.Module):

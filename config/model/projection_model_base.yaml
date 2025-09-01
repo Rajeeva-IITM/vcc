@@ -41,12 +41,12 @@ primary_loss:
   loss_functions:
     - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
       beta: 1
-    - _target_: src.models.components.loss_functions.MyMSELoss
-    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
+    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
   weights:
     - 1
-    - 0.2
-    - 0.1
+    - 0.5
+    # - 0.1
 contrastive_loss:
   _target_: src.models.components.loss_functions.WeightedContrastiveLoss
   alpha: 2

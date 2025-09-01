@@ -101,7 +101,7 @@ class VCCEmbeddingDataset(Dataset):
 
     def __getitem__(
         self, index: int
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor | list]:
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor | list[None]]:
         """
         Retrieves a single data sample
         """
@@ -226,7 +226,7 @@ class VCCDataModule(LightningDataModule):
                     )
 
                 self.test_data = VCCEmbeddingDataset(
-                    control_expression=control_data,
+                    control_expression=control_data.sample(fraction=1, shuffle=True),
                     perturbed_genes=perturbed_genes,
                     gene_embeddings=gene_embeddings,
                     ko_expression=None,
@@ -273,7 +273,7 @@ class VCCDataModule(LightningDataModule):
                 # Assembling the pieces
                 console.log("Creating Dataset")
                 self.data = VCCEmbeddingDataset(
-                    control_expression=control_data,
+                    control_expression=control_data.sample(fraction=1, shuffle=True),
                     perturbed_genes=ko_gene_data,
                     gene_embeddings=gene_embeddings,
                     ko_expression=ko_exp_data,
