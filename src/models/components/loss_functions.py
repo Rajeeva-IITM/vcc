@@ -43,7 +43,11 @@ class HybridGeneLoss(nn.Module):
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         control_exp: torch.Tensor,
+        **kwargs,
     ) -> torch.Tensor:
+        """
+        Calculate the Loss
+        """
         # --- 1. Weighted MSE Component ---
         with torch.no_grad():  # Weights are based on ground truth, no gradient needed
             weights = torch.abs(y_true - control_exp)
@@ -57,9 +61,9 @@ class HybridGeneLoss(nn.Module):
 
         # --- 2. Soft Similarity Component ---
         # Calculate LFCs (adding a small epsilon for numerical stability)
-        epsilon = 1e-8
-        predicted_lfc = torch.log2((y_pred + epsilon) / (control_exp + epsilon))
-        true_lfc = torch.log2((y_true + epsilon) / (control_exp + epsilon))
+        # epsilon = 1e-8
+        predicted_lfc = y_pred - control_exp
+        true_lfc = y_true - control_exp
 
         pred_abs = torch.abs(predicted_lfc)
         true_abs = torch.abs(true_lfc)
@@ -355,6 +359,17 @@ class PerturbationSimilarityLoss(nn.Module):
         gene_embeddings: torch.Tensor,
         **kwargs,
     ):
+        """
+        Calculate the Loss
+
+        Args:
+            y_pred (torch.Tensor): Predicted features
+            y_true (torch.Tensor): Not used, here for consistency
+            gene_embeddings (torch.Tensor): Gene Embeddings
+
+        Returns:
+            torch.Tensor (loss)
+        """
         pairwise_distances = torch.pdist(y_pred)
 
         gene_distances = torch.pdist(gene_embeddings)
@@ -718,6 +733,9 @@ class MSEandDiffExpLoss(nn.Module):
         self.diffexp = DiffExpError(reduction=reduction)
 
     def forward(self, y_pred, y_true, **kwargs):
+        """
+        Calculate the Loss
+        """
         mse_loss = self.mse.forward(y_pred, y_true)
         diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
 
@@ -742,6 +760,9 @@ class MDPLoss(nn.Module):
         self.psl = WeightedContrastiveLoss()
 
     def forward(self, y_pred, y_true, **kwargs):
+        """
+        Calculate the Loss
+        """
         mse_loss = self.mse.forward(y_pred, y_true)
         diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
         psl = self.psl.forward(y_pred, y_true, **kwargs)

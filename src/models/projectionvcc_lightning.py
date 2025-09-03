@@ -378,6 +378,9 @@ class VCCModule(LightningModule):
         return loss
 
     def predict_step(self, batch, batch_ix):
+        """
+        Prediction step
+        """
         X, _ = batch
         y_pred, projection = self.forward(X)
 
@@ -460,7 +463,7 @@ class VCCModulewithConsistency(VCCModule):
             y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
         )  # For some losses
         contrastive_loss: torch.Tensor = self.contrastive_loss.forward(
-            latent, latent, X["ko_vec"]
+            y_pred=latent, y_true=latent, gene_embeddings=X["ko_vec"]
         )
         consistency_loss: torch.Tensor = self.consistency_loss.forward(
             y_pred, y_pred_noise
@@ -524,6 +527,9 @@ class VCCModulewithConsistency(VCCModule):
     def training_step(
         self, batch: tuple[dict[str, torch.Tensor], torch.Tensor], batch_idx: int
     ):
+        """
+        Training step
+        """
         X, y = batch
         X_noise, _ = self._add_noise_to_inputs(batch)
         y_pred, latent = self.forward(X)
@@ -540,6 +546,9 @@ class VCCModulewithConsistency(VCCModule):
     def validation_step(
         self, batch: tuple[dict[str, torch.Tensor], torch.Tensor], batch_idx: int
     ):
+        """
+        Validation step
+        """
         X, y = batch
         X_noise, _ = self._add_noise_to_inputs(batch)
         y_pred, latent = self.forward(X)
@@ -556,6 +565,9 @@ class VCCModulewithConsistency(VCCModule):
     def test_step(
         self, batch: tuple[dict[str, torch.Tensor], torch.Tensor], batch_idx: int
     ):
+        """
+        Testing step
+        """
         X, y = batch
         X_noise, _ = self._add_noise_to_inputs(batch)
         y_pred, latent = self.forward(X)
