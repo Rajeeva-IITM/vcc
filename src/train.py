@@ -8,6 +8,8 @@ from lightning import LightningDataModule, LightningModule, Trainer
 from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
+from src.utils.umap_utilities import perform_umap, plot_output_plotly  # noqa: E402
+
 torch.cuda.empty_cache()
 
 console = rich.console.Console()
@@ -63,15 +65,16 @@ def main(conf: DictConfig):
         y_pred = torch.cat(preds)
         console.log(f"Predicted expression shape: {y_pred.shape}")
         torch.save(y_pred, save_path + "/predictions.pt")
-        # console.log("Running UMAP")
+        console.log("Running UMAP")
         # reducer = UMAP(n_neighbors=50)
-        # reduced = reducer.fit_transform(y_pred)
-        # sns.scatterplot(
-        #     x=reduced[:, 0], y=reduced[:, 1], hue=datamodule.test_data.perturbed_genes
-        # )
-        # plt.legend(bbox_to_anchor=(1, 1), ncols=3)
-        # plt.savefig(save_path + "/umap_plot.png", dpi=300, bbox_inches="tight")
-        # logger.log_image("UMAP-plot", Image.open(save_path + "/umap_plot.png"))
+        reduced = perform_umap(y_pred, genes=datamodule.test_data.perturbed_genes)
+        fig = plot_output_plotly(reduced)
+        fig.write_html(save_path + "/UMAP-figure.html", auto_play=False)
+        table = wandb.Table(columns=["UMAP-figure"])
+        table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
+
+        logger.experiment.log({"UMAP-figure": table})
+
     except Exception as e:
         console.log(f"There was this error: {e}")
     wandb.finish()

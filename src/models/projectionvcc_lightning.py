@@ -119,7 +119,7 @@ class VCCModule(LightningModule):
             y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
         )  # For some losses
         contrastive_loss: torch.Tensor = self.contrastive_loss.forward(
-            latent, latent, X["ko_vec"]
+            latent, latent, gene_embeddings=X["ko_vec"]
         )
         loss = primary_loss + contrastive_loss * self.contrastive_weight
 
@@ -205,7 +205,7 @@ class VCCModule(LightningModule):
             y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
         )  # For some losses
         contrastive_loss: torch.Tensor = self.contrastive_loss.forward(
-            latent, latent, X["ko_vec"]
+            latent, latent, gene_embeddings=X["ko_vec"]
         )
         loss = primary_loss + contrastive_loss * self.contrastive_weight
 
@@ -298,7 +298,7 @@ class VCCModule(LightningModule):
             y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
         )  # For some losses
         contrastive_loss: torch.Tensor = self.contrastive_loss.forward(
-            latent, latent, X["ko_vec"]
+            latent, latent, gene_embeddings=X["ko_vec"]
         )
         loss = primary_loss + contrastive_loss * self.contrastive_weight
 
