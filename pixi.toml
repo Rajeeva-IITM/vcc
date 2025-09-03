@@ -27,6 +27,10 @@ optuna = ">=4.4.0,<5"
 optuna-integration = ">=4.4.0,<5"
 torchmetrics = ">=1.8.1,<2"
 pytorch_scatter = ">=2.1.2,<3"
+altair = ">=5.5.0,<6"
+vegafusion = ">=2.0.2,<3"
+vl-convert-python = ">=1.7.0,<2"
+plotly = ">=6.3.0,<7"
 
 [system-requirements]
 cuda = "12.0"
