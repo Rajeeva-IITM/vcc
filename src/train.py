@@ -70,10 +70,10 @@ def main(conf: DictConfig):
         reduced = perform_umap(y_pred, genes=datamodule.test_data.perturbed_genes)
         fig = plot_output_plotly(reduced)
         fig.write_html(save_path + "/UMAP-figure.html", auto_play=False)
-        table = wandb.Table(columns=["UMAP-figure"])
-        table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
+        # table = wandb.Table(columns=["UMAP-figure"])
+        # table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
 
-        logger.experiment.log({"UMAP-figure": table})
+        logger.experiment.log({"UMAP-figure": wandb.Plotly(fig)})
 
     except Exception as e:
         console.log(f"There was this error: {e}")

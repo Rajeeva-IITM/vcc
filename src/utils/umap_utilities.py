@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import polars as pl
 import seaborn as sns
 from bokeh.palettes import Turbo256  # A palette with 20 distinct colors
@@ -135,6 +136,8 @@ def plot_output_plotly(embedding_df: pl.DataFrame):
         Turbo256[i * 5] for i, _ in enumerate(embedding_df["gene"].unique())
     ]
 
+    spread_palette = np.random.choice(spread_palette, size=len(spread_palette))
+
     # Convert to Pandas for Plotly
     embedding_pd_df = embedding_df.to_pandas()
     avg_data_pd = avg_data.to_pandas()
@@ -151,6 +154,7 @@ def plot_output_plotly(embedding_df: pl.DataFrame):
         color_discrete_sequence=spread_palette,
         # We remove the default hover info from individual points to focus on the centroid labels
         hover_data={},
+        category_orders={"gene": np.sort(embedding_pd_df["gene"].unique())},
     )
 
     # --- 4. Add the Centroid Labels as a New Layer (Trace) ---

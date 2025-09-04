@@ -1,6 +1,7 @@
 import gc
 import warnings
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import polars as pl
@@ -50,54 +51,36 @@ class VCCEmbeddingDataset(Dataset):
 
     def __init__(
         self,
-        control_expression: pl.DataFrame,
-        perturbed_genes: np.ndarray,
-        gene_embeddings: pl.DataFrame,
-        ko_expression: pl.DataFrame | None,  # In case of predict stage
-        stage: str | None,
+        control_expression: torch.Tensor,
+        perturbed_genes: np.typing.NDArray[np.str_],
+        gene_embeddings: dict[str, torch.Tensor],
+        ko_expression: torch.Tensor | None,  # In case of predict stage
+        stage: Literal["predict", None],
     ) -> None:
         super().__init__()
 
         self.stage = stage
-        # match self.stage:
-        #     case None:
-        #         raise ValueError("`stage` cannot be None ")
-        #     case "predict":
-        #         print("Dataset initialized in prediction mode")
-        #         assert control_expression.shape[0] == ko_gene_data.shape[0], (
-        #             f"Data not of the same length\
-        #         {control_expression.shape[0], ko_gene_data.shape[0]}"
-        #         )
-        #     case _:
-        #         assert (
-        #             control_expression.shape[0]
-        #             == control_expression.shape[0]
-        #             == ko_gene_data.shape[0]
-        #         ), (
-        #             f"Data not of the same length\
-        #         {control_expression.shape[0], control_expression.shape[0], ko_gene_data.shape[0]}"
-        #         )
-
-        self.control_expression = torch.from_numpy(control_expression.to_numpy()).to(
-            torch.float32
-        )
+        self.is_predict_stage = stage == "predict"
+        self.control_expression = control_expression
+        self.ko_expression = ko_expression
         self.perturbed_genes = perturbed_genes
-        self.gene_embeddings = gene_embeddings.to_pandas().set_index("gene_name")
-        self.ko_expression = (
-            torch.from_numpy(ko_expression.to_numpy()).to(torch.float32)
-            if (ko_expression is not None)
-            else None
-        )
-
-        del control_expression, perturbed_genes, gene_embeddings
-        gc.collect()
+        self.gene_embeddings = gene_embeddings
 
     def __len__(self):
         """
         Returns the length of the dataset
         """
-
         return len(self.perturbed_genes)
+
+    # def _process_gene_embeddings(
+    #     self, gene_embeddings: torch.Tensor, perturbed_genes: np.typing.NDArray[np.str_]
+    # ):
+    #     self.perturbed_genes = perturbed_genes
+
+    #     # Create a dictionary of tensors
+    #     # self.gene_embeddings = torch.tensor(gene_embeddings.select(cs.numeric()).to_numpy()).to(torch.float32)
+    #     # gene_names = gene_embeddings['gene_name'].to_numpy()
+    #     self.gene_to_idx: dict[str, int] = {gene:[idx] for idx,gene in enumerate(self.gene_indices)}
 
     def __getitem__(
         self, index: int
@@ -107,12 +90,9 @@ class VCCEmbeddingDataset(Dataset):
         """
 
         exp_input = self.control_expression[index, :]
-        genes = self.perturbed_genes[index]
-        gene_input = torch.from_numpy(self.gene_embeddings.loc[genes].values).to(
-            torch.float32
-        )
+        gene_input = self.gene_embeddings[self.perturbed_genes[index]]
 
-        if self.stage == "predict":
+        if self.is_predict_stage:
             pred_input = []
         else:
             pred_input = (
@@ -193,6 +173,26 @@ class VCCDataModule(LightningDataModule):
         # Won't change with stage
         control_data = read_data(self.control_data_path)
         gene_embeddings = read_data(self.gene_embedding_path)
+        gene_embeddings_torch = gene_embeddings.select(cs.numeric()).to_torch()
+        gene_indices: np.typing.NDArray[np.str_] = gene_embeddings[
+            "gene_name"
+        ].to_numpy()
+
+        gene_embeddings_dict = {
+            gene: gene_embeddings_torch[idx] for idx, gene in enumerate(gene_indices)
+        }
+
+        match self.trainer.precision:
+            case "16-mixed" | "16-true":
+                dtype = torch.float16
+            case "32-true":
+                dtype = torch.float32
+            case "64-true":
+                dtype = torch.float64
+            case "bf16-mixed" | "bf16-true":
+                dtype = torch.bfloat16
+            case _:
+                dtype = torch.float32
 
         match stage:
             case "predict":
@@ -226,9 +226,13 @@ class VCCDataModule(LightningDataModule):
                     )
 
                 self.test_data = VCCEmbeddingDataset(
-                    control_expression=control_data.sample(fraction=1, shuffle=True),
+                    control_expression=(
+                        control_data.sample(fraction=1, shuffle=True)
+                        .to_torch()
+                        .to(dtype)
+                    ),
                     perturbed_genes=perturbed_genes,
-                    gene_embeddings=gene_embeddings,
+                    gene_embeddings=gene_embeddings_dict,
                     ko_expression=None,
                     stage=stage,
                 )
@@ -273,10 +277,14 @@ class VCCDataModule(LightningDataModule):
                 # Assembling the pieces
                 console.log("Creating Dataset")
                 self.data = VCCEmbeddingDataset(
-                    control_expression=control_data.sample(fraction=1, shuffle=True),
+                    control_expression=(
+                        control_data.sample(fraction=1, shuffle=True)
+                        .to_torch()
+                        .to(dtype)
+                    ),
                     perturbed_genes=ko_gene_data,
-                    gene_embeddings=gene_embeddings,
-                    ko_expression=ko_exp_data,
+                    gene_embeddings=gene_embeddings_dict,
+                    ko_expression=(ko_exp_data).to_torch(),
                     stage=stage,
                 )
 
@@ -348,7 +356,10 @@ class VCCDataModule(LightningDataModule):
         """Creates and returns the prediction dataloader"""
         console.log("Creating prediction dataloader")
         return DataLoader(
-            self.test_data, batch_size=1, num_workers=self.num_workers, shuffle=False
+            self.test_data,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
         )
 
 

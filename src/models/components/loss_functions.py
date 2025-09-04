@@ -1,10 +1,9 @@
-from warnings import warn
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_scatter
 import torchmetrics
+from torchmetrics.functional import pairwise_cosine_similarity
 
 
 class HybridGeneLoss(nn.Module):
@@ -233,7 +232,8 @@ class WeightedContrastiveLoss(nn.Module):
         self.gene_hyperbolic = gene_hyperbolic
         self.hyperbolic_scale = hyperbolic_similarity_scale
 
-    def _cosine_distance(self, u: torch.Tensor, v: torch.Tensor):
+    @staticmethod
+    def _cosine_distance(u: torch.Tensor, v: torch.Tensor):
         u_norm = F.normalize(u, dim=-1)
         v_norm = F.normalize(v, dim=-1)
         similarity = torch.matmul(u_norm, v_norm.T)
@@ -317,24 +317,43 @@ class WeightedContrastiveLoss(nn.Module):
         pred_sim_off_diag = pred_sim_mat[mask].view(batch_size, batch_size - 1)
         gene_sim_off_diag = gene_sim_mat[mask].view(batch_size, batch_size - 1)
 
-        positive_gene_sim = F.relu(gene_sim_off_diag)  # Care more about similar genes
-        weights = torch.pow(
-            positive_gene_sim, self.alpha
+        # Calculating weights
+        # positive_gene_sim = F.relu(gene_sim_off_diag)  # Care more about similar genes
+        # positive_gene_sim = gene_sim_off_diag
+
+        # Sign is preserved for all powers
+        weights = torch.sign(gene_sim_off_diag) * torch.pow(
+            gene_sim_off_diag, self.alpha
         )  # Alpha to increase the focus of weights
 
         exp_pred_sim = torch.exp(pred_sim_off_diag)
 
+        # Push and pull modelling
+
+        pos_mask = (weights > 0).float()
+        neg_mask = (weights < 0).float()
+
+        ## positive component: forces similar expression for similar gene - must be increased
+        positive_component = (weights * pos_mask * exp_pred_sim).sum(dim=1)
+        ## negative component: forces dissimilar expression for dissimilar gene - must be decreased
+        negative_component = (torch.abs(weights) * neg_mask * exp_pred_sim).sum(dim=1)
+
+        log_pos = torch.log(positive_component + self.eps)
+        log_neg = torch.log(negative_component + self.eps)
+
+        loss = (log_neg - log_pos).mean()
+
         # Weighted loss calculation
 
-        weighted_pos = (weights * exp_pred_sim).sum(dim=1)
-        total_sim = exp_pred_sim.sum(dim=1)
+        # weighted_pos = (weights * exp_pred_sim).sum(dim=1)
+        # total_sim = exp_pred_sim.sum(dim=1)
 
-        if weighted_pos.sum() == 0 or total_sim.sum() == 0:
-            warn(
-                "Contrastive loss: One of the distance vectors sums to zero. loss will not be defined"
-            )
+        # if weighted_pos.sum() == 0 or total_sim.sum() == 0:
+        #     warn(
+        #         "Contrastive loss: One of the distance vectors sums to zero. loss will not be defined"
+        #     )
 
-        loss = -torch.log((weighted_pos + self.eps) / (total_sim + self.eps)).mean()
+        # loss = -torch.log((weighted_pos + self.eps) / (total_sim + self.eps)).mean()
 
         return loss
 
@@ -345,10 +364,7 @@ class PerturbationSimilarityLoss(nn.Module):
     """
 
     def __init__(self, eps=1e-6, reduction: str | None = "mean") -> None:
-        super(
-            PerturbationSimilarityLoss,
-            self,
-        ).__init__()
+        super().__init__()
         self.eps = eps
         self.reduction = reduction
 
@@ -370,12 +386,16 @@ class PerturbationSimilarityLoss(nn.Module):
         Returns:
             torch.Tensor (loss)
         """
-        pairwise_distances = torch.pdist(y_pred)
 
-        gene_distances = torch.pdist(gene_embeddings)
+        triu_mask = torch.triu(
+            torch.ones(y_pred.shape[0], y_pred.shape[0], dtype=torch.bool), diagonal=1
+        )
+        pairwise_similarities = pairwise_cosine_similarity(y_pred)[triu_mask]
+
+        gene_distances = pairwise_cosine_similarity(gene_embeddings)[triu_mask]
 
         calc = 1 - torchmetrics.functional.spearman_corrcoef(
-            pairwise_distances, gene_distances
+            pairwise_similarities, gene_distances
         )
 
         match self.reduction:

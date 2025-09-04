@@ -11,7 +11,7 @@ net:
     # no_processing: true
   exp_processor_args:
     input_size: 18080
-    hidden_size: 512
+    hidden_size: 1024
     num_hidden_layers: 4
     output_size: 256
     dropout: 0.0
@@ -40,13 +40,13 @@ primary_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
     - _target_: src.models.components.loss_functions.HybridGeneLoss
-      alpha: 3
-      temperature: 0.25
+      alpha: 5
+      temperature: 0.125
       gamma: 1
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
     - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
   weights:
-    - 1.5
+    - 1
     - 0.5
     - 0.25
 contrastive_loss:
@@ -54,11 +54,11 @@ contrastive_loss:
   loss_functions:
     - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
-      temperature: 0.5
+      temperature: 0.05
       alpha: 2
   weights:
-    - 1
     - 0.5
+    - 1
 contrastive_weight: 1
 optimizer:
   _target_: torch.optim.AdamW
