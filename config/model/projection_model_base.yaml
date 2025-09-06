@@ -39,15 +39,19 @@ net:
 primary_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.HybridGeneLoss
-      alpha: 5
-      temperature: 0.125
-      gamma: 1
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.SoftJaccardLoss
+      temperature: 0.05
+      threshold: 1.5
+    - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+      temperature: 0.05
+      threshold: 1.5
+      beta: 1
+    - _target_: src.models.components.loss_functions.MyMSELoss
     - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
   weights:
     - 1
-    - 0.5
+    - 1
+    - 0.75
     - 0.25
 contrastive_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
@@ -57,7 +61,7 @@ contrastive_loss:
       temperature: 0.05
       alpha: 2
   weights:
-    - 0.5
+    - 1
     - 1
 contrastive_weight: 1
 optimizer:

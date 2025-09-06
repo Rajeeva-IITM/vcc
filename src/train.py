@@ -55,25 +55,26 @@ def main(conf: DictConfig):
     trainer.fit(model, datamodule, ckpt_path=conf.get("ckpt_path"))
 
     try:
-        save_path = conf.callbacks.model_checkpoint.dirpath
-        console.log("Prediction and quick evaluation")
-        preds: list[torch.Tensor] = trainer.predict(model, datamodule)
-        if (
-            len(preds[0]) == 2
-        ):  # For the case where both final prediction and the projector info is given
-            preds = [pred[0] for pred in preds]
-        y_pred = torch.cat(preds)
-        console.log(f"Predicted expression shape: {y_pred.shape}")
-        torch.save(y_pred, save_path + "/predictions.pt")
-        console.log("Running UMAP")
-        # reducer = UMAP(n_neighbors=50)
-        reduced = perform_umap(y_pred, genes=datamodule.test_data.perturbed_genes)
-        fig = plot_output_plotly(reduced)
-        fig.write_html(save_path + "/UMAP-figure.html", auto_play=False)
-        # table = wandb.Table(columns=["UMAP-figure"])
-        # table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
+        if not conf.trainer.fast_dev_run:
+            save_path = conf.callbacks.model_checkpoint.dirpath
+            console.log("Prediction and quick evaluation")
+            preds: list[torch.Tensor] = trainer.predict(model, datamodule)
+            if (
+                len(preds[0]) == 2
+            ):  # For the case where both final prediction and the projector info is given
+                preds = [pred[0] for pred in preds]
+            y_pred = torch.cat(preds)
+            console.log(f"Predicted expression shape: {y_pred.shape}")
+            torch.save(y_pred, save_path + "/predictions.pt")
+            console.log("Running UMAP")
+            # reducer = UMAP(n_neighbors=50)
+            reduced = perform_umap(y_pred, genes=datamodule.test_data.perturbed_genes)
+            fig = plot_output_plotly(reduced)
+            fig.write_html(save_path + "/UMAP-figure.html", auto_play=False)
+            table = wandb.Table(columns=["UMAP-figure"])
+            table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
 
-        logger.experiment.log({"UMAP-figure": wandb.Plotly(fig)})
+            # logger.experiment.log({"UMAP-figure": wandb.Plotly(fig)})
 
     except Exception as e:
         console.log(f"There was this error: {e}")

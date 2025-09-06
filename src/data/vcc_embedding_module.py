@@ -10,7 +10,7 @@ import rich
 import torch
 from icecream import ic
 from lightning.pytorch import LightningDataModule
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Subset, WeightedRandomSampler
 
 from src.utils.data import read_data
 
@@ -226,11 +226,7 @@ class VCCDataModule(LightningDataModule):
                     )
 
                 self.test_data = VCCEmbeddingDataset(
-                    control_expression=(
-                        control_data.sample(fraction=1, shuffle=True)
-                        .to_torch()
-                        .to(dtype)
-                    ),
+                    control_expression=(control_data.to_torch().to(dtype)),
                     perturbed_genes=perturbed_genes,
                     gene_embeddings=gene_embeddings_dict,
                     ko_expression=None,
@@ -277,11 +273,7 @@ class VCCDataModule(LightningDataModule):
                 # Assembling the pieces
                 console.log("Creating Dataset")
                 self.data = VCCEmbeddingDataset(
-                    control_expression=(
-                        control_data.sample(fraction=1, shuffle=True)
-                        .to_torch()
-                        .to(dtype)
-                    ),
+                    control_expression=(control_data.to_torch().to(dtype)),
                     perturbed_genes=ko_gene_data,
                     gene_embeddings=gene_embeddings_dict,
                     ko_expression=(ko_exp_data).to_torch(),
@@ -292,15 +284,19 @@ class VCCDataModule(LightningDataModule):
 
                 gene_names = ko_gene_data.flatten()
 
-                train_index, val_index = gene_train_test_split(
+                self.train_index, self.val_index = gene_train_test_split(
                     gene_names,  # type: ignore
                     test_size=self.test_size,
                     seed=self.seed,
                 )
 
                 console.log("Split data generation")
-                self.train_data = Subset(self.data, train_index)
-                self.val_data = Subset(self.data, val_index)
+                self.train_data: Subset[VCCEmbeddingDataset] = Subset(
+                    self.data, self.train_index
+                )
+                self.val_data: Subset[VCCEmbeddingDataset] = Subset(
+                    self.data, self.val_index
+                )
 
                 del ko_gene_data, ko_exp_data  # Clean up
                 gc.collect()
@@ -315,12 +311,27 @@ class VCCDataModule(LightningDataModule):
             DataLoader: DataLoader  for the train dataset
         """
         console.log("Creating Training Dataloader")
+
+        # Defining stratified sampling
+
+        unique, counts = np.unique(
+            self.train_data.dataset.perturbed_genes[self.train_index],
+            return_counts=True,
+        )
+        weight_dict = dict(zip(unique, [1 / count for count in counts]))
+        weights = [
+            weight_dict[gene]
+            for gene in self.train_data.dataset.perturbed_genes[self.train_index]
+        ]
+        sampler = WeightedRandomSampler(weights, len(self.train_data))
+
         return DataLoader(
             self.train_data,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            shuffle=True,
+            # shuffle=True,
             pin_memory=True,
+            sampler=sampler,
         )
 
     def val_dataloader(self):

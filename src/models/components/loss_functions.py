@@ -47,6 +47,7 @@ class HybridGeneLoss(nn.Module):
         """
         Calculate the Loss
         """
+
         # --- 1. Weighted MSE Component ---
         with torch.no_grad():  # Weights are based on ground truth, no gradient needed
             weights = torch.abs(y_true - control_exp)
@@ -67,8 +68,8 @@ class HybridGeneLoss(nn.Module):
         pred_abs = torch.abs(predicted_lfc)
         true_abs = torch.abs(true_lfc)
 
-        pred_weights = F.softmax(pred_abs / self.temperature, dim=-1)
-        true_weights = F.softmax(true_abs / self.temperature, dim=-1)
+        pred_weights = F.sigmoid(pred_abs / self.temperature)
+        true_weights = F.sigmoid(true_abs / self.temperature)
 
         similarity = F.cosine_similarity(pred_weights, true_weights, dim=-1)
         similarity_loss = 1 - similarity
@@ -84,6 +85,49 @@ class HybridGeneLoss(nn.Module):
             return combined_loss.sum()
         else:
             return combined_loss
+
+
+class SoftJaccardLoss(nn.Module):
+    """
+    A soft jaccard loss to measure how well differentially expressed genes are captured
+    """
+
+    def __init__(
+        self, temperature: float = 0.5, threshold: float = 1, reduction: str = "mean"
+    ) -> None:
+        super().__init__()
+
+        self.temperature = temperature
+        self.threshold = threshold
+        self.reduction = reduction
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+        **kwargs,
+    ):
+        predicted_lfc = (
+            torch.abs(y_pred - control_exp) - self.threshold
+        ) / self.temperature
+        true_lfc = (torch.abs(y_true - control_exp) - self.threshold) / self.temperature
+
+        pred_probs = torch.sigmoid(predicted_lfc)
+        true_probs = torch.sigmoid(true_lfc)
+
+        intersection = torch.sum(pred_probs * true_probs, -1)
+        union = predicted_lfc.sum(-1) + true_lfc.sum(-1) - intersection
+
+        calc = 1 - intersection / union
+
+        match self.reduction:
+            case "sum":
+                return calc.sum()
+            case "mean":
+                return calc.mean()
+            case _:
+                return calc
 
 
 class GenewiseMSELoss(nn.Module):
@@ -160,13 +204,22 @@ class DiffExpAwareMSELoss(nn.Module):
     """
 
     def __init__(
-        self, alpha: float = 1, beta: float = 1, reduction: str | None = "mean"
+        self,
+        temperature: float = 1,
+        beta: float = 1,
+        threshold: float = 1,
+        reduction: str | None = "mean",
     ) -> None:
         super(DiffExpAwareMSELoss, self).__init__()
 
-        self.beta = beta
+        # sigmoid part - https://www.desmos.com/calculator/efw5ylni45
+        self.beta = beta  # Weight for direction loss
         self.reduction = reduction
-        self.alpha = alpha
+        self.temperature = temperature  # Determines sharpness of sigmoid function, weight is determined by
+        # how much bigger the fold change is from the threshold
+        self.threshold = (
+            threshold  # Determines anchor of sigmoid (place where value is 0.5)
+        )
 
     def forward(
         self,
@@ -186,13 +239,14 @@ class DiffExpAwareMSELoss(nn.Module):
 
         # 1. Weighted MSE first
         weights = torch.abs((y_true - control_exp))
-        weights = (weights - weights.min()) / (
-            weights.max() - weights.min()
-        ) ** self.alpha
+        scaled_weights = torch.sigmoid((weights - self.threshold) / self.temperature)
+        # weights = (weights - weights.min()) / (
+        #     weights.max() - weights.min() + 1e-8
+        # ) ** self.alpha
         # weights = weights * weights.mean(dim=-1).pow(-1).view(-1,1) # Normalize with mean
         # weights = weights * 100 # fixed for now, must be a hyperparameter
-        mse_calc = (y_pred - y_true) ** 2
-        mse_calc = weights * (y_pred - y_true) ** 2
+        # mse_calc = (y_pred - y_true) ** 2
+        mse_calc = scaled_weights * (y_pred - y_true) ** 2
         # print(mse_calc)
 
         # 2. Direction control
@@ -338,10 +392,13 @@ class WeightedContrastiveLoss(nn.Module):
         ## negative component: forces dissimilar expression for dissimilar gene - must be decreased
         negative_component = (torch.abs(weights) * neg_mask * exp_pred_sim).sum(dim=1)
 
-        log_pos = torch.log(positive_component + self.eps)
-        log_neg = torch.log(negative_component + self.eps)
+        # log_pos = torch.log(positive_component + self.eps)
+        # log_neg = torch.log(negative_component + self.eps)
 
-        loss = (log_neg - log_pos).mean()
+        score = positive_component / (
+            positive_component + negative_component + self.eps
+        )
+        loss = -torch.log(score).mean()
 
         # Weighted loss calculation
 
