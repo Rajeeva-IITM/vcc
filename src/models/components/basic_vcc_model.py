@@ -11,9 +11,7 @@ from src.utils.process_activation_function import get_activation
 # Decoder of encoded parts
 
 
-class ProcessingNN(
-    nn.Module
-):  # TODO: Might have to move to this to the components module
+class ProcessingNN(nn.Module):
     """Build the module for processing vectors
 
     Parameters
@@ -80,35 +78,28 @@ class ProcessingNN(
             self.sequence.append(nn.Identity())
 
         else:
-            if len(self.hidden_layers) == 2:  # Makes two layers
-                # No hidden layers: just input -> output
-                self.sequence.append(nn.Identity())
-            else:
-                for i in range(len(self.hidden_layers) - 1):
-                    self.sequence.append(
-                        nn.Linear(
-                            self.hidden_layers[i],
-                            self.hidden_layers[i + 1],
-                            dtype=torch.float,
-                        )
+            for _ in range(num_hidden_layers):
+                self.sequence.append(
+                    nn.Linear(
+                        self.hidden_size,
+                        self.hidden_size,
                     )
-                    self.sequence.append(self.activation)
+                )
+                self.sequence.append(nn.LayerNorm(self.hidden_size))
 
-                self.sequence.append(nn.Dropout(self.dropout))
+                self.sequence.append(self.activation)
 
-            self.projection = nn.Linear(self.input_size, self.hidden_size)  # Step 1
-            self.normalization = nn.LayerNorm(self.hidden_size)  # Step 2
-            self.output_projection = nn.Linear(
-                self.hidden_size, self.output_size
-            )  # Step 4
-            if (
-                self.ensure_output_positive
-            ):  # if we want to ensure our outputs are positive
-                self.positive_enforcer = nn.ReLU()  # Step 5 # maybe
-            else:
-                self.positive_enforcer = nn.Identity()
+            self.sequence.append(nn.Dropout(self.dropout))
 
-        self.process_sequence = nn.Sequential(*self.sequence)  # Step 3
+        self.input_projection = nn.Linear(self.input_size, self.hidden_size)  # Step 1
+        self.output_projection = nn.Linear(self.hidden_size, self.output_size)  # Step 3
+
+        if self.ensure_output_positive:
+            self.positive_enforcer = nn.ReLU()  # Step 4 # maybe
+        else:
+            self.positive_enforcer = nn.Identity()
+
+        self.process_sequence = nn.Sequential(*self.sequence)  # Step 2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """This function takes in an input tensor `x` and passes it through the neural network's
@@ -128,30 +119,23 @@ class ProcessingNN(
         if self.no_processing:
             return self.process_sequence(x)
 
-        projection = self.projection.forward(
+        projection = self.input_projection(
             x
         )  # shape batch x input_size -> batch x hidden_size
+        processed_through_sequence: torch.Tensor = self.process_sequence(projection)
 
         if self.residual_connection:
-            # Normalize and then pass through hidden layers - shape batch x hidden_size -> batch x hidden_size
-            processed_through_sequence: torch.Tensor = self.process_sequence.forward(
-                self.normalization(projection)
-            )
-            # Project to output and enforce positivity - shape batch x hidden_size x batch x output_size
-            output = self.positive_enforcer.forward(
-                self.output_projection.forward(processed_through_sequence + projection)
+            # Project to output and enforce positivity - shape batch x hidden_size -> batch x output_size
+            output = self.positive_enforcer(
+                self.output_projection(processed_through_sequence + projection)
             )
 
             return output
 
         else:
-            # Normalize and then pass through hidden layers - shape batch x hidden_size -> batch x hidden_size
-            processed_through_sequence: torch.Tensor = self.process_sequence.forward(
-                self.normalization(projection)
-            )
-            # Project to output and enforce positivity - shape batch x hidden_size x batch x output_size
-            output = self.positive_enforcer.forward(
-                self.output_projection.forward(processed_through_sequence)
+            # Project to output and enforce positivity - shape batch x hidden_size -> batch x output_size
+            output = self.positive_enforcer(
+                self.output_projection(processed_through_sequence)
             )
 
             return output
@@ -213,8 +197,8 @@ class CellModel(nn.Module):
         ko_vec: torch.Tensor = inputs["ko_vec"]
         exp_vec: torch.Tensor = inputs["exp_vec"]
 
-        ko_processed = self.ko_processor.forward(ko_vec)
-        exp_processed = self.exp_processor.forward(exp_vec)
+        ko_processed = self.ko_processor(ko_vec)
+        exp_processed = self.exp_processor(exp_vec)
 
         # Fusing the two representations
         match self.fusion:
@@ -232,16 +216,16 @@ class CellModel(nn.Module):
                 fused_representaion = torch.cat([ko_processed, exp_processed], dim=1)
 
             case "bilinear":
-                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
+                fused_representaion = self.bilinear(ko_processed, exp_processed)
 
             case _:
                 raise ValueError(
                     "fusion_type should be one of ['sum','product','cross_attn', 'bilinear']"
                 )
 
-        latent = self.concat_processor.forward(fused_representaion)
+        latent = self.concat_processor(fused_representaion)
 
-        output = self.decoder.forward(latent)
+        output = self.decoder(latent)
 
         return output
 
@@ -287,8 +271,8 @@ class ProjectorCellModel(nn.Module):
         ko_vec: torch.Tensor = inputs["ko_vec"]
         exp_vec: torch.Tensor = inputs["exp_vec"]
 
-        ko_processed = self.ko_processor.forward(ko_vec)
-        exp_processed = self.exp_processor.forward(exp_vec)
+        ko_processed = self.ko_processor(ko_vec)
+        exp_processed = self.exp_processor(exp_vec)
 
         # Fusing the two representations
         match self.fusion:
@@ -306,16 +290,16 @@ class ProjectorCellModel(nn.Module):
                 fused_representaion = torch.cat([ko_processed, exp_processed], dim=1)
 
             case "bilinear":
-                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
+                fused_representaion = self.bilinear(ko_processed, exp_processed)
 
             case _:
                 raise ValueError(
                     "fusion_type should be one of ['sum','product','concat', 'bilinear']"
                 )
 
-        latent = self.projector.forward(fused_representaion)
+        latent = self.projector(fused_representaion)
 
-        output = self.decoder.forward(fused_representaion)
+        output = self.decoder(fused_representaion)
 
         return output, latent
 

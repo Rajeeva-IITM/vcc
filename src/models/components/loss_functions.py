@@ -1,9 +1,150 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_scatter
 import torchmetrics
 from torchmetrics.functional import pairwise_cosine_similarity
+
+
+class AdjacencySimilarityLoss(nn.Module):
+    """
+    This implements the Graph Laplacian loss which acts as a regularizer to ensure smoothness in the data
+    """
+
+    def __init__(
+        self,
+        scaling_type: Literal["linear", "sigmoid", "relu"] = "relu",
+        temperature: float = 1,
+        threshold: float = 0,
+    ):
+        """
+        Args:
+            scaling_type (str): Type of scaling to be performed on the cosine similarity matrix
+            temperature (float): Temperature for sigmoid scaling (Defaults to 1)
+            threshold (float): Threshold for sigmoid scaling (Defaults to 0)
+        """
+        super().__init__()
+
+        self.scaling_type = scaling_type
+        self.temperature = temperature
+        self.threshold = threshold
+
+    def scale_adjacency(self, adjacency: torch.Tensor):
+        match self.scaling_type:
+            case "linear":
+                scaled_adjacency = (1 + adjacency) / 2
+            case "sigmoid":
+                scaled_adjacency = torch.sigmoid(
+                    (adjacency - self.threshold) / self.temperature
+                )
+            case "relu":
+                scaled_adjacency = adjacency.relu()
+            case _:
+                raise ValueError("Invalid scaling type")
+
+        return scaled_adjacency
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        **kwargs,
+    ):
+        """
+        Calculate Laplacian loss
+        """
+
+        shape = gene_embeddings.shape[0]
+        gene_adjacency = WeightedContrastiveLoss.cosine_distance(
+            gene_embeddings, gene_embeddings
+        ) - torch.eye(shape).to(
+            device=gene_embeddings.device
+        )  # shape bxb and remove diagonal
+        gene_adjacency = self.scale_adjacency(gene_adjacency)  # scale between 0 and 1
+
+        pred_adjcacency = WeightedContrastiveLoss.cosine_distance(y_pred, y_pred)
+        pred_adjcacency = self.scale_adjacency(pred_adjcacency)
+
+        loss = torch.linalg.norm(gene_adjacency - pred_adjcacency, ord="fro")
+
+        return loss
+
+
+class LaplacianRegularizerLoss(nn.Module):
+    """
+    This implements the Graph Laplacian loss which acts as a regularizer to ensure smoothness in the data
+    """
+
+    def __init__(
+        self,
+        scaling_type: Literal["linear", "sigmoid", "relu"] = "relu",
+        temperature: float = 1,
+        threshold: float = 0,
+    ):
+        """
+        Args:
+            scaling_type (str): Type of scaling to be performed on the cosine similarity matrix
+            temperature (float): Temperature for sigmoid scaling (Defaults to 1)
+            threshold (float): Threshold for sigmoid scaling (Defaults to 0)
+        """
+        super().__init__()
+
+        self.scaling_type = scaling_type
+        self.temperature = temperature
+        self.threshold = threshold
+
+    def scale_adjacency(self, adjacency: torch.Tensor):
+        match self.scaling_type:
+            case "linear":
+                scaled_adjacency = (1 + adjacency) / 2
+            case "sigmoid":
+                scaled_adjacency = torch.sigmoid(
+                    (adjacency - self.threshold) / self.temperature
+                )
+            case "relu":
+                scaled_adjacency = adjacency.relu()
+            case _:
+                raise ValueError("Invalid scaling type")
+
+        return scaled_adjacency
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        **kwargs,
+    ):
+        """
+        Calculate Laplacian loss
+        """
+
+        shape = gene_embeddings.shape[0]
+        gene_adjacency = WeightedContrastiveLoss.cosine_distance(
+            gene_embeddings, gene_embeddings
+        ) - torch.eye(shape).to(
+            device=gene_embeddings.device
+        )  # shape bxb and remove diagonal
+        gene_adjacency = self.scale_adjacency(gene_adjacency)  # scale between 0 and 1
+
+        degree_inverse = torch.diag(
+            gene_adjacency.sum(-1).clamp(min=1e-8).pow(-0.5)
+        )  # shape: b xb
+
+        laplacian = torch.eye(shape).to(device=gene_embeddings.device) - (
+            degree_inverse @ gene_adjacency @ degree_inverse
+        )
+
+        spec = torch.linalg.norm(laplacian, ord=2)
+        scaled_laplacian = laplacian / (spec + 1e-8)
+
+        calc = y_pred.T @ scaled_laplacian @ y_pred  # shape bxb
+        loss = torch.trace(calc)
+
+        return loss
 
 
 class HybridGeneLoss(nn.Module):
@@ -93,19 +234,25 @@ class SoftJaccardLoss(nn.Module):
     """
 
     def __init__(
-        self, temperature: float = 0.5, threshold: float = 1, reduction: str = "mean"
+        self,
+        temperature: float = 0.5,
+        threshold: float = 1,
+        variance_parameter: float = 0.5,
+        reduction: str = "mean",
     ) -> None:
         super().__init__()
 
         self.temperature = temperature
         self.threshold = threshold
         self.reduction = reduction
+        self.variance_parameter = variance_parameter
 
     def forward(
         self,
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         control_exp: torch.Tensor,
+        gene_embeddings: torch.Tensor,
         **kwargs,
     ):
         predicted_lfc = (
@@ -117,17 +264,27 @@ class SoftJaccardLoss(nn.Module):
         true_probs = torch.sigmoid(true_lfc)
 
         intersection = torch.sum(pred_probs * true_probs, -1)
-        union = predicted_lfc.sum(-1) + true_lfc.sum(-1) - intersection
+        union = pred_probs.sum(-1) + true_probs.sum(-1) - intersection
 
-        calc = 1 - intersection / union
+        calc = 1 - intersection / (union + 1e-8)
+
+        # unique, indices = gene_embeddings.unique(return_inverse=True, dim=0)
+        # loss = torch_scatter.scatter_mean(calc, indices, dim=0) # Gene wise Jaccard averaging
+        # std = torch_scatter.scatter_std(calc, indices, dim=0, ) # Buggy - don't use
+
+        # e_loss_2 = torch_scatter.scatter_mean(calc**2, indices, dim=0)
+
+        # variance = e_loss_2 - loss**2 # Var[x] = E[x^2] - (E[x])^2
+
+        final_loss = calc  # + variance * self.variance_parameter
 
         match self.reduction:
             case "sum":
-                return calc.sum()
+                return final_loss.sum()
             case "mean":
-                return calc.mean()
+                return final_loss.mean()
             case _:
-                return calc
+                return final_loss
 
 
 class GenewiseMSELoss(nn.Module):
@@ -287,7 +444,7 @@ class WeightedContrastiveLoss(nn.Module):
         self.hyperbolic_scale = hyperbolic_similarity_scale
 
     @staticmethod
-    def _cosine_distance(u: torch.Tensor, v: torch.Tensor):
+    def cosine_distance(u: torch.Tensor, v: torch.Tensor):
         u_norm = F.normalize(u, dim=-1)
         v_norm = F.normalize(v, dim=-1)
         similarity = torch.matmul(u_norm, v_norm.T)
@@ -354,10 +511,10 @@ class WeightedContrastiveLoss(nn.Module):
         # Calculate cosine distances
 
         pred_sim_mat = (
-            self._cosine_distance(y_pred, y_pred) / self.temperature
+            self.cosine_distance(y_pred, y_pred) / self.temperature
         )  # Temperature to scale the distances
         if not self.gene_hyperbolic:
-            gene_sim_mat = self._cosine_distance(gene_embeddings, gene_embeddings)
+            gene_sim_mat = self.cosine_distance(gene_embeddings, gene_embeddings)
         elif self.gene_hyperbolic:
             gene_sim_mat = self._pairwise_poincare_similarity(gene_embeddings)
         else:

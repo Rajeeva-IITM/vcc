@@ -98,7 +98,7 @@ class VCCModule(LightningModule):
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
-    def forward(self, X: dict[str, torch.Tensor]):
+    def forward(self, X: dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Performs a forward pass through the network.
         Args:
@@ -107,7 +107,7 @@ class VCCModule(LightningModule):
             torch.Tensor: Output tensor from the network.
         """
 
-        return self.net.forward(X)
+        return self.net(X)
 
     def _calculate_losses(
         self,

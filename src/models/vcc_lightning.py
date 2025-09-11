@@ -1,6 +1,6 @@
 # from typing import Any, Dict, List, Tuple
 
-from typing import override
+from typing import Literal, override
 
 import torch
 import torchmetrics
@@ -42,9 +42,6 @@ class VCCModule(LightningModule):
     def __init__(
         self,
         net: CellModel | nn.Module,
-        # lr: float,
-        # max_lr: float,
-        # weight_decay: float,
         loss_fn: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
@@ -57,26 +54,28 @@ class VCCModule(LightningModule):
 
         self.net = net
         self.criterion = loss_fn
-
-        self.train_mae = torchmetrics.MeanAbsoluteError()
-        # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
-        self.train_mse = torchmetrics.MeanSquaredError()
+        self.mae = torchmetrics.functional.mean_absolute_error
+        self.mse = torchmetrics.functional.mean_squared_error
+        self.jaccard_loss = lf.SoftJaccardLoss()
+        # self.train_mae = torchmetrics.MeanAbsoluteError()
+        # # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
+        # self.train_mse = torchmetrics.MeanSquaredError()
         # self.train_corr = torchmetrics.SpearmanCorrCoef()
         self.train_genevar = lf.BatchVariance()
         self.train_diffexp = lf.DiffExpError()
         self.train_psl = lf.WeightedContrastiveLoss()
 
-        self.val_mae = torchmetrics.MeanAbsoluteError()
-        # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
-        self.val_mse = torchmetrics.MeanSquaredError()
+        # self.val_mae = torchmetrics.MeanAbsoluteError()
+        # # self.val_cosine = torchmetrics.CosineSimilarity(reduction="mean")
+        # self.val_mse = torchmetrics.MeanSquaredError()
         # self.val_corr = torchmetrics.SpearmanCorrCoef()
         self.val_genevar = lf.BatchVariance()
         self.val_diffexp = lf.DiffExpError()
         self.val_psl = lf.WeightedContrastiveLoss()
 
-        self.test_mae = torchmetrics.MeanAbsoluteError()
-        # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
-        self.test_mse = torchmetrics.MeanSquaredError()
+        # self.test_mae = torchmetrics.MeanAbsoluteError()
+        # # self.test_cosine = torchmetrics.CosineSimilarity(reduction="mean")
+        # self.test_mse = torchmetrics.MeanSquaredError()
         # self.test_corr = torchmetrics.SpearmanCorrCoef()
         self.test_genevar = lf.BatchVariance()
         self.test_diffexp = lf.DiffExpError()
@@ -94,7 +93,7 @@ class VCCModule(LightningModule):
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
-    def forward(self, X):
+    def forward(self, X) -> torch.Tensor:
         """
         Performs a forward pass through the network.
         Args:
@@ -103,28 +102,38 @@ class VCCModule(LightningModule):
             torch.Tensor: Output tensor from the network.
         """
 
-        return self.net.forward(X)
+        return self.net(X)
 
-    def training_step(self, batch, batch_idx):
+    def _calculate_losses(
+        self,
+        batch: tuple[dict[str, torch.Tensor], torch.Tensor],
+        y_pred: torch.Tensor,
+        step: Literal["train/{}", "val/{}", "test/{}"],
+    ):
         """
-        Training step
+        Calculates the three losses: Primary, contrastive and consistency
         """
-        # ic(batch)
         X, y = batch
-        y_pred = self.forward(X)
-        # ic(y, y.shape)
-        # ic(y_pred, y_pred.shape)
-        loss = self.criterion(
+        loss: torch.Tensor = self.criterion(
             y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
         )  # For some losses
 
-        self.train_mae.update(y_pred, y)
-        self.train_cosine = torchmetrics.functional.cosine_similarity(
-            y_pred, y, reduction="mean"
-        )
-        self.train_mse.update(y_pred, y)
+        return {
+            step.format("loss"): loss,
+        }
 
-        # self.train_corr.update(y_pred.T, y.T)
+    def _calculate_metrics(
+        self,
+        batch: tuple[dict[str, torch.Tensor], torch.Tensor],
+        y_pred: torch.Tensor,
+        step: Literal["train/{}", "val/{}", "test/{}"],
+    ):
+        X, y = batch
+
+        mae = self.mae(y_pred, y)
+        mse = self.mse(y_pred, y)
+        jaccard_loss = self.jaccard_loss.forward(y_pred, y, X["exp_vec"], X["ko_vec"])
+        cosine = torchmetrics.functional.cosine_similarity(y_pred, y, reduction="mean")
 
         corr = torchmetrics.functional.spearman_corrcoef(
             y_pred.T, y.T
@@ -134,190 +143,61 @@ class VCCModule(LightningModule):
         diff_exp = self.train_diffexp.forward(y_pred, y, X["exp_vec"])
         psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
 
-        self.log(
-            "train/loss", loss, on_epoch=True, on_step=True, prog_bar=True, logger=True
-        )
+        return {
+            step.format("mae"): mae,
+            step.format("mse"): mse,
+            step.format("jaccard_loss"): jaccard_loss,
+            step.format("cosine"): cosine,
+            step.format("corr"): corr,
+            step.format("genevar"): gene_level_variance,
+            step.format("diff_exp"): diff_exp,
+            step.format("pertloss"): psl,
+        }
 
-        self.log(
-            "train/mae",
-            self.train_mae,
-            on_epoch=True,
-            on_step=True,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "train/cosine",
-            self.train_cosine,
-            on_epoch=True,
-            on_step=True,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "train/mse",
-            self.train_mse,
-            on_epoch=True,
-            on_step=True,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "train/corr", corr, on_epoch=True, on_step=True, prog_bar=True, logger=True
-        )
+    def training_step(
+        self, batch: tuple[dict[str, torch.Tensor], torch.Tensor], batch_idx
+    ):
+        """
+        Training step
+        """
+        X, y = batch
+        y_pred = self.forward(X)
+        losses = self._calculate_losses(batch, y_pred, "train/{}")
+        metrics = self._calculate_metrics(batch, y_pred, "train/{}")
+        self.log_dict(losses, prog_bar=True, logger=True, on_epoch=True)
+        self.log_dict(metrics, prog_bar=True, logger=True, on_epoch=True)
 
-        self.log(
-            "train/var", gene_level_variance, on_epoch=True, prog_bar=True, logger=True
-        )
+        return losses["train/loss"]
 
-        self.log("train/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
-        self.log("train/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
-
-        return loss
-
-    def validation_step(self, batch, batch_idx):
+    def validation_step(
+        self, batch: tuple[dict[str, torch.Tensor], torch.Tensor], batch_idx
+    ):
         """
         Validation step
         """
-        (
-            X,
-            y,
-        ) = batch
+        X, y = batch
         y_pred = self.forward(X)
-        loss = self.criterion(
-            y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
-        )  # For some losses
+        losses = self._calculate_losses(batch, y_pred, "val/{}")
+        metrics = self._calculate_metrics(batch, y_pred, "val/{}")
 
-        self.val_mae.update(y_pred, y)
-        self.val_cosine = torchmetrics.functional.cosine_similarity(
-            y_pred, y, reduction="mean"
-        )
-        self.val_mse.update(y_pred, y)
-        # self.val_corr.update(y_pred.T, y.T)
-        # corr = self.val_corr.compute() # Only creates an approximation but this accumulates in the gpu if left uncomputed
-        corr = torchmetrics.functional.spearman_corrcoef(
-            y_pred.T, y.T
-        ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
+        self.log_dict(losses, prog_bar=True, logger=True, on_epoch=True)
+        self.log_dict(metrics, prog_bar=True, logger=True, on_epoch=True)
 
-        gene_level_variance = y_pred.var(dim=0).mean()
-        diff_exp = self.val_diffexp.forward(y_pred, y, X["exp_vec"])
-        psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
+        return losses["val/loss"]
 
-        self.log(
-            "val/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
-        )
-
-        self.log(
-            "val/mae",
-            self.val_mae,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "val/cosine",
-            self.val_cosine,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "val/mse",
-            self.val_mse,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "val/corr",
-            corr,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-
-        self.log(
-            "val/var", gene_level_variance, on_epoch=True, prog_bar=True, logger=True
-        )
-
-        self.log("val/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
-        self.log("val/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
-
-        return loss
-
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: tuple[dict[str, torch.Tensor], torch.Tensor], batch_idx):
         """
         Testing step
         """
         X, y = batch
         y_pred = self.forward(X)
-        loss = self.criterion(
-            y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
-        )  # For some losses
+        losses = self._calculate_losses(batch, y_pred, "test/{}")
+        metrics = self._calculate_metrics(batch, y_pred, "test/{}")
 
-        self.test_mae.update(y_pred, y)
-        self.test_cosine = torchmetrics.functional.cosine_similarity(
-            y_pred, y, reduction="mean"
-        )
-        # self.test_mse.update(y_pred, y)
-        # self.val_corr.update(y_pred.T, y.T)
-        corr = torchmetrics.functional.spearman_corrcoef(
-            y_pred.T, y.T
-        ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
+        self.log_dict(losses, prog_bar=True, logger=True, on_epoch=True)
+        self.log_dict(metrics, prog_bar=True, logger=True, on_epoch=True)
 
-        gene_level_variance = y_pred.var(dim=0).mean()
-        diff_exp = self.test_diffexp.forward(y_pred, y, X["exp_vec"])
-        psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
-
-        self.log(
-            "test/loss", loss, on_epoch=True, on_step=False, prog_bar=True, logger=True
-        )
-
-        self.log(
-            "test/mae",
-            self.test_mae,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "test/cosine",
-            self.test_cosine,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "test/mse",
-            self.test_mse,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-        self.log(
-            "test/corr",
-            corr,
-            on_epoch=True,
-            on_step=False,
-            prog_bar=True,
-            logger=True,
-        )
-
-        self.log(
-            "test/var", gene_level_variance, on_epoch=True, prog_bar=True, logger=True
-        )
-
-        self.log("test/diff_exp", diff_exp, prog_bar=True, logger=True, on_epoch=True)
-        self.log("val/pertloss", psl, prog_bar=True, on_epoch=True, logger=True)
-
-        return loss
+        return losses["test/loss"]
 
     def predict_step(self, batch, batch_ix):
         X, _ = batch

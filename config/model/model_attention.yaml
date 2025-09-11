@@ -2,41 +2,51 @@ _target_: src.models.vcc_lightning.VCCModule
 net:
   _target_: src.models.components.vcc_model_attention.CellModelAttention
   ko_processor_args:
-    input_size: 512
-    hidden_layers: [512,512,512]
+    input_size: 256
+    hidden_size: 512
+    num_hidden_layers: 3
     output_size: 256
     dropout: 0.0
-    activation: relu
+    activation:
+      _target_: src.models.components.activations.SwiGLU
+      input_dim: 512 # same as hidden size
     # no_processing: true
   exp_processor_args:
     input_size: 18080
-    hidden_layers: [512,512,512]
+    hidden_size: 512
+    num_hidden_layers: 4
     output_size: 256
     dropout: 0.0
-    activation: relu
-    # no_processing: true
+    activation:
+      _target_: src.models.components.activations.SwiGLU
+      input_dim: 512
   attention_args:
-    embed_dim: 256 # Must be same as the dimensions of your key and value
+    embed_dim: 256
     num_heads: 4
   decoder_args:
     input_size: 256
-    hidden_layers: [512,1024,2048]
+    hidden_size: 1024
+    num_hidden_layers: 5
     output_size: ${model.net.exp_processor_args.input_size}
     dropout: 0.0
-    activation: relu
-    residual_connection: false
+    activation:
+      _target_: src.models.components.activations.SwiGLU
+      input_dim: 1024
+    residual_connection: True
+    ensure_output_positive: True
   fusion_type: 'cross_attn'
 loss_fn:
-  _target_: torch.nn.MSELoss
+  _target_: src.models.components.loss_functions.GenewiseMSELoss
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
-  lr: 5e-4
+  lr: 1e-5
   weight_decay: 1e-5
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
   _partial_: true
-  T_0: 10
+  T_0: 5
+  T_mult: 2
 
 # lr: 1e-5
 # max_lr: 1e-2

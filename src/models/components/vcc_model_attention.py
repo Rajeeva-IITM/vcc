@@ -1,5 +1,7 @@
 from typing import Any, Literal
 
+import matplotlib.pyplot as plt
+import seaborn as sns
 import torch
 import torch.nn as nn
 from torch.nn import MultiheadAttention
@@ -61,7 +63,7 @@ class CellModelAttention(nn.Module):
         self.exp_processor = ProcessingNN(**exp_processor_args)
         # self.concat_processor = ProcessingNN(**concat_processor_args)
         self.decoder = ProcessingNN(**decoder_args)
-        self.attention = NormalizedAttention(**attention_args)
+        self.attention = MultiheadAttention(**attention_args)
         self.fusion = fusion_type
         if self.fusion == "bilinear":
             self.bilinear = nn.Bilinear(
@@ -69,8 +71,14 @@ class CellModelAttention(nn.Module):
                 in2_features=exp_processor_args["output_size"],
                 out_features=attention_args["embed_dim"],
             )
+        self.feature_proj_in = nn.Linear(
+            1, attention_args["embed_dim"]
+        )  # Projecting of processor out to attn_in
+        self.feature_proj_out = nn.Linear(
+            attention_args["embed_dim"], 1
+        )  # Projection of attn_out to decoder_in
 
-    def forward(self, inputs: dict[str, torch.Tensor]):
+    def forward(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Performs a forward pass through the model using the provided input tensors.
         Args:
@@ -89,47 +97,84 @@ class CellModelAttention(nn.Module):
 
         match self.fusion:
             case "sum":
-                fused_representaion = (
-                    ko_processed + exp_processed
-                )  # Ensure they are of same size
-                query = fused_representaion.unsqueeze(0)
-                key = fused_representaion.unsqueeze(0)
-                value = fused_representaion.unsqueeze(0)
+                fused = ko_processed + exp_processed  # Ensure they are of same size
+                query, key, value = fused, fused, fused
 
             case "product":
-                fused_representaion = (
-                    ko_processed * exp_processed
-                )  # Ensure they are of same size
-                query = fused_representaion.unsqueeze(0)
-                key = fused_representaion.unsqueeze(0)
-                value = fused_representaion.unsqueeze(0)
+                fused = ko_processed * exp_processed  # Ensure they are of same size
+                query, key, value = fused, fused, fused
 
             case "cross_attn":
-                query = ko_processed.unsqueeze(0)
-                key = exp_processed.unsqueeze(0)
-                value = exp_processed.unsqueeze(0)
+                query, key, value = ko_processed, exp_processed, exp_processed
 
             case "bilinear":
-                fused_representaion = self.bilinear.forward(ko_processed, exp_processed)
-                query = ko_processed.unsqueeze(0)
-                key = exp_processed.unsqueeze(0)
-                value = exp_processed.unsqueeze(0)
+                fused = self.bilinear.forward(ko_processed, exp_processed)
+                query, key, value = fused, fused, fused
             case _:
                 raise ValueError(
                     "fusion_type should be one of ['sum','product','cross_attn', 'bilinear']"
                 )
 
-        # Moving onto the attention module
+        # changing dimensions from [batch, hidden_dim] -> [hidden_dim, batch, 1]
+        # Attention expects the input to be of the form [seq_length, batch_size, embedding_dim]
+        # Attention is then calculated for each `token` along the seq_length. This is the context length in LLMs
+        query = query.unsqueeze(-1).transpose(0, 1)
+        query = self.feature_proj_in(query)
+        key = key.unsqueeze(-1).transpose(0, 1)
+        key = self.feature_proj_in(key)
+        value = value.unsqueeze(-1).transpose(0, 1)
+        value = self.feature_proj_in(value)
 
-        attn_output, _ = self.attention.forward(
+        # Moving onto the attention module
+        attn_output, attn_weights = self.attention(
             query=query,
             key=key,
             value=value,
-        )  # discarding weights
+        )
+        self.last_attn_weights = attn_weights.detach().cpu()
 
-        output = self.decoder.forward(attn_output.squeeze(0))
+        # changing dimensions from [hidden_dim, batch_size, embedding_dim] -> [batch, hidden_dim]
+        attn_output: torch.Tensor = self.feature_proj_out(attn_output)
+        attn_output = attn_output.transpose(0, 1).squeeze(-1)
+        output = self.decoder(attn_output)
 
         return output
+
+    def visualize_attention(
+        self,
+        sample_idx: int = 0,
+        head: int = 0,
+        avg_heads: bool = False,
+        cmap="viridis",
+    ):
+        """
+        Visualize the attention map for a given sample.
+
+        Args:
+            sample_idx (int): which sample in the batch to visualize.
+            head (int): which attention head to visualize (ignored if avg_heads=True).
+            avg_heads (bool): if True, average across all heads.
+            cmap (str): colormap for heatmap.
+        """
+        if self.last_attn_weights is None:
+            raise ValueError("No attention weights stored. Run a forward pass first.")
+
+        attn = self.last_attn_weights[sample_idx]  # [num_heads, d_model, d_model]
+
+        if avg_heads:
+            attn_matrix = attn.mean(0)  # average across heads
+            title = f"Sample {sample_idx} | Avg over {attn.shape[0]} heads"
+        else:
+            attn_matrix = attn[head]
+            title = f"Sample {sample_idx} | Head {head}"
+
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(attn_matrix, cmap=cmap, cbar=True)
+        plt.title(title)
+        plt.xlabel("Key (features)")
+        plt.ylabel("Query (features)")
+        plt.tight_layout()
+        plt.show()
 
 
 if __name__ == "__main__":
