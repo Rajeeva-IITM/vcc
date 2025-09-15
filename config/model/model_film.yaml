@@ -6,27 +6,27 @@ net:
   film_mlp:
     _target_: src.models.components.basic_vcc_model.ProcessingNN
     input_size: 256
-    hidden_size: 36160
-    num_hidden_layers: 3
-    output_size: 256
+    hidden_size: 512
+    num_hidden_layers: 1
+    output_size: 36160
     dropout: 0.0
-    activation: relu
+    activation: silu
     # no_processing: true
   control_mlp:
     _target_: src.models.components.basic_vcc_model.ProcessingNN
     input_size: 18080
     hidden_size: 512
-    num_hidden_layers: 3
+    num_hidden_layers: 1
     output_size: 18080
     dropout: 0.0
     activation: relu
-    no_processing: true
+    # no_processing: true
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    # - _target_: src.models.components.loss_functions.SoftDiceLoss
-    #   temperature: 2
-    #   threshold: 0
+    - _target_: src.models.components.loss_functions.SoftDiceLoss
+      temperature: 2
+      threshold: 0
     # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
     #   temperature: 0.75
     #   threshold: 1.5
@@ -37,7 +37,7 @@ loss_fn:
   weights:
     - 1
     # - 1
-    # - 0.1
+    - 0.1
     # - 1e-5
 optimizer:
   _target_: torch.optim.AdamW
