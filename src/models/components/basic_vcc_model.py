@@ -129,7 +129,6 @@ class ProcessingNN(nn.Module):
             output = self.positive_enforcer(
                 self.output_projection(processed_through_sequence + projection)
             )
-
             return output
 
         else:
@@ -137,7 +136,6 @@ class ProcessingNN(nn.Module):
             output = self.positive_enforcer(
                 self.output_projection(processed_through_sequence)
             )
-
             return output
 
 

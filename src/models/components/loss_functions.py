@@ -8,6 +8,65 @@ import torchmetrics
 from torchmetrics.functional import pairwise_cosine_similarity
 
 
+class SoftDiceLoss(nn.Module):
+    """
+    A soft Dice loss to measure how well differentially expressed genes are captured
+    """
+
+    def __init__(
+        self,
+        temperature: float = 0.5,
+        threshold: float = 1,
+        variance_parameter: float = 0.5,
+        reduction: str = "mean",
+    ) -> None:
+        super().__init__()
+
+        self.temperature = temperature
+        self.threshold = threshold
+        self.reduction = reduction
+        self.variance_parameter = variance_parameter
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        **kwargs,
+    ):
+        predicted_lfc = (
+            torch.abs(y_pred - control_exp) - self.threshold
+        ) / self.temperature
+        true_lfc = (torch.abs(y_true - control_exp) - self.threshold) / self.temperature
+
+        pred_probs = torch.sigmoid(predicted_lfc)
+        true_probs = torch.sigmoid(true_lfc)
+
+        intersection = torch.sum(pred_probs * true_probs, -1)
+        # union = pred_probs.sum(-1) + true_probs.sum(-1) - intersection
+
+        calc = 1 - (2 * intersection) / (pred_probs.sum(-1) + true_probs.sum(-1) + 1e-8)
+
+        # unique, indices = gene_embeddings.unique(return_inverse=True, dim=0)
+        # loss = torch_scatter.scatter_mean(calc, indices, dim=0) # Gene wise Jaccard averaging
+        # std = torch_scatter.scatter_std(calc, indices, dim=0, ) # Buggy - don't use
+
+        # e_loss_2 = torch_scatter.scatter_mean(calc**2, indices, dim=0)
+
+        # variance = e_loss_2 - loss**2 # Var[x] = E[x^2] - (E[x])^2
+
+        final_loss = calc  # + variance * self.variance_parameter
+
+        match self.reduction:
+            case "sum":
+                return final_loss.sum()
+            case "mean":
+                return final_loss.mean()
+            case _:
+                return final_loss
+
+
 class AdjacencySimilarityLoss(nn.Module):
     """
     This implements the Graph Laplacian loss which acts as a regularizer to ensure smoothness in the data

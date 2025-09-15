@@ -7,7 +7,7 @@ class SwiGLU(nn.Module):
     """
     Implements the SwiGLU activation function. Defined as:
 
-    SwiGLU(x) = W1@x * Swish(W2@x)
+    SwiGLU(x) = W1 @ x * Swish(W2 @ x)
     """
 
     def __init__(self, input_dim: int) -> None:

@@ -1,0 +1,38 @@
+_target_: src.models.vcc_lightning.VCCModule
+net:
+  _target_: src.models.components.simple_model.CellModelSimple
+  num_genes: 18080
+  perturbation_embed_dim: 256
+loss_fn:
+  _target_: src.models.components.loss_functions.CompositeLoss
+  loss_functions:
+    # - _target_: src.models.components.loss_functions.SoftDiceLoss
+    #   temperature: 2
+    #   threshold: 0
+    # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+    #   temperature: 0.75
+    #   threshold: 1.5
+    #   beta: 1
+    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
+    # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
+  weights:
+    - 1
+    # - 1
+    # - 0.1
+    # - 1e-5
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-4
+  weight_decay: 1e-5
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  _partial_: true
+  T_0: 5
+  T_mult: 2
+
+# lr: 1e-5
+# max_lr: 1e-2
+# weight_decay: 1e-5
+# composite_loss_lambda: 1

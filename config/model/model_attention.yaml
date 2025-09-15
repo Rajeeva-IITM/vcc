@@ -1,6 +1,6 @@
 _target_: src.models.vcc_lightning.VCCModule
 net:
-  _target_: src.models.components.vcc_model_attention.CellModelAttention
+  _target_: src.models.components.diffawarecell.DiffAwareCellModelAttention
   ko_processor_args:
     input_size: 256
     hidden_size: 512
@@ -36,7 +36,23 @@ net:
     ensure_output_positive: True
   fusion_type: 'cross_attn'
 loss_fn:
-  _target_: src.models.components.loss_functions.GenewiseMSELoss
+  _target_: src.models.components.loss_functions.CompositeLoss
+  loss_functions:
+    - _target_: src.models.components.loss_functions.SoftDiceLoss
+      temperature: 2
+      threshold: 0
+    # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+    #   temperature: 0.75
+    #   threshold: 1.5
+    #   beta: 1
+    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
+    # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
+  weights:
+    - 1
+    - 1
+    - 0.1
+    # - 1e-5
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
