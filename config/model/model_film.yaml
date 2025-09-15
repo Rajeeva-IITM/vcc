@@ -6,7 +6,7 @@ net:
   film_mlp:
     _target_: src.models.components.basic_vcc_model.ProcessingNN
     input_size: 256
-    hidden_size: 36060
+    hidden_size: 36160
     num_hidden_layers: 3
     output_size: 256
     dropout: 0.0
