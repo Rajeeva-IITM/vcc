@@ -22,7 +22,7 @@ net:
     _target_: src.models.components.basic_vcc_model.ProcessingNN
     input_size: 256
     hidden_size: 2048
-    num_hidden_layers: 1
+    num_hidden_layers: 4
     output_size: 512 # Twice exp_processor output
     dropout: 0.0
     activation: silu
@@ -37,25 +37,25 @@ net:
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.SoftDiceLoss
-      temperature: 1
-      threshold: 0
-    - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
-      temperature: 0.75
-      threshold: 1.5
-      beta: 1
+    # - _target_: src.models.components.loss_functions.SoftDiceLoss
+    #   temperature: 1
+    #   threshold: 0
+    # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+    #   temperature: 0.75
+    #   threshold: 1.5
+    #   beta: 1
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
     - _target_: src.models.components.loss_functions.DiffGeneBCELoss
-      device: cuda:2
+      device: cuda:0
       pos_weight: 3
       temperature: 1
       threshold: 0
     # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
   weights:
-    - 1
-    - 1
-    - 1
+    # - 1
+    # - 1
+    - 0.1
     - 1
     # - 1e-5
 optimizer:
