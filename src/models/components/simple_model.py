@@ -95,4 +95,4 @@ class CellModelFiLMConditioned(nn.Module):
 
         y_pred: torch.Tensor = exp_vec + (gamma_p * L_x) + beta_p
 
-        return y_pred
+        return y_pred.relu()

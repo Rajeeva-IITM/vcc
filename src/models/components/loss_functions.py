@@ -8,6 +8,51 @@ import torchmetrics
 from torchmetrics.functional import pairwise_cosine_similarity
 
 
+class DiffGeneBCELoss(nn.Module):
+    """
+    Loss applied for each gene of the sample to classify if it is
+    a DEG or not
+    """
+
+    def __init__(
+        self,
+        temperature: float = 0.5,
+        threshold: float = 1,
+        pos_weight: float | None = None,
+        reduction: str = "mean",
+        device: str | torch.device = "cpu",
+    ) -> None:
+        super().__init__()
+
+        self.temperature = temperature
+        self.threshold = threshold
+        self.reduction = reduction
+
+        if pos_weight is not None:
+            param_pos_weight = torch.tensor([pos_weight], dtype=torch.float).to(device)
+        else:
+            param_pos_weight = None
+        self.bce = nn.BCEWithLogitsLoss(
+            pos_weight=param_pos_weight, reduction=reduction
+        )
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+        **kwargs,
+    ):
+        predicted_lfc = (
+            torch.abs(y_pred - control_exp) - self.threshold
+        ) / self.temperature
+        true_lfc = (torch.abs(y_true - control_exp) - self.threshold) / self.temperature
+
+        true_probs = true_lfc.sigmoid()
+
+        return self.bce(predicted_lfc, true_probs)
+
+
 class SoftDiceLoss(nn.Module):
     """
     A soft Dice loss to measure how well differentially expressed genes are captured
@@ -48,15 +93,17 @@ class SoftDiceLoss(nn.Module):
 
         calc = 1 - (2 * intersection) / (pred_probs.sum(-1) + true_probs.sum(-1) + 1e-8)
 
-        # unique, indices = gene_embeddings.unique(return_inverse=True, dim=0)
-        # loss = torch_scatter.scatter_mean(calc, indices, dim=0) # Gene wise Jaccard averaging
+        _, indices = gene_embeddings.unique(return_inverse=True, dim=0)
+        loss = torch_scatter.scatter_mean(
+            calc, indices, dim=0
+        )  # Gene wise Dice averaging
         # std = torch_scatter.scatter_std(calc, indices, dim=0, ) # Buggy - don't use
 
         # e_loss_2 = torch_scatter.scatter_mean(calc**2, indices, dim=0)
 
         # variance = e_loss_2 - loss**2 # Var[x] = E[x^2] - (E[x])^2
 
-        final_loss = calc  # + variance * self.variance_parameter
+        final_loss = loss  # + variance * self.variance_parameter
 
         match self.reduction:
             case "sum":

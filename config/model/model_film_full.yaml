@@ -1,26 +1,39 @@
+
 _target_: src.models.vcc_lightning.VCCModule
 net:
-  _target_: src.models.components.simple_model.CellModelFiLMConditioned
-  num_genes: 18080
-  perturbation_embed_dim: 256
-  film_mlp:
+  _target_: src.models.components.basic_vcc_model.CellModelFiLM
+  ko_processor:
     _target_: src.models.components.basic_vcc_model.ProcessingNN
     input_size: 256
-    hidden_size: 512
-    num_hidden_layers: 1
-    output_size: 36160
+    hidden_size: 2048
+    num_hidden_layers: 4
+    output_size: 256
     dropout: 0.0
     activation: silu
-    # no_processing: true
-  control_mlp:
+  exp_processor:
     _target_: src.models.components.basic_vcc_model.ProcessingNN
     input_size: 18080
-    hidden_size: 512
-    num_hidden_layers: 1
-    output_size: 18080
+    hidden_size: 2048
+    num_hidden_layers: 4
+    output_size: 256
     dropout: 0.0
-    activation: relu
-    no_processing: true
+    activation: silu
+  film_processor:
+    _target_: src.models.components.basic_vcc_model.ProcessingNN
+    input_size: 256
+    hidden_size: 2048
+    num_hidden_layers: 1
+    output_size: 512 # Twice exp_processor output
+    dropout: 0.0
+    activation: silu
+  decoder:
+    _target_: src.models.components.basic_vcc_model.ProcessingNN
+    input_size: 256
+    hidden_size: 2048
+    num_hidden_layers: 4
+    output_size: ${model.net.exp_processor.input_size}
+    dropout: 0.0
+    activation: silu
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
@@ -34,9 +47,9 @@ loss_fn:
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
     - _target_: src.models.components.loss_functions.DiffGeneBCELoss
       device: cuda:2
-      pos_weight: 10
-      temperature: 0.1
-      threshold: 1
+      pos_weight: 3
+      temperature: 1
+      threshold: 0
     # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
   weights:
@@ -48,15 +61,10 @@ loss_fn:
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
-  lr: 1e-4
+  lr: 1e-5
   weight_decay: 1e-5
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
   _partial_: true
   T_0: 5
   T_mult: 2
-
-# lr: 1e-5
-# max_lr: 1e-2
-# weight_decay: 1e-5
-# composite_loss_lambda: 1

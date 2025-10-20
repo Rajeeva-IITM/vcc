@@ -144,8 +144,6 @@ class CellModel(nn.Module):
     Virtual Cell Model
     Model that takes in two inputs processes them individually and returns their vectors.
     The vectors are then concatenated and processed by an encoder.
-
-
     """
 
     def __init__(
@@ -300,6 +298,70 @@ class ProjectorCellModel(nn.Module):
         output = self.decoder(fused_representaion)
 
         return output, latent
+
+
+class CellModelFiLM(nn.Module):
+    """
+    A model where change in expression is conditioned on perturbation
+
+    y_pred = x + gamma(p) * L(x) + beta(p)
+
+    where gamma, beta, L are small ProcessingNN
+    p -> perturbation embedding
+    x -> control expression
+
+    More complete and deeper than one in simple_model.py
+    """
+
+    def __init__(
+        self,
+        ko_processor: ProcessingNN,
+        exp_processor: ProcessingNN,
+        film_processor: ProcessingNN,
+        decoder: ProcessingNN,
+    ):
+        assert film_processor.input_size == ko_processor.output_size, (
+            "The input of film mlp must be same as the perturbation output"
+        )
+        assert film_processor.output_size == 2 * exp_processor.output_size, (
+            "The output of film mlp must be twice the dim of the exp_processor"
+        )
+        assert decoder.input_size == exp_processor.output_size, (
+            "Mismatch between control mlp output to number of genes"
+        )
+
+        super().__init__()
+
+        self.ko_processor = ko_processor
+        self.exp_processor = exp_processor
+        self.film_processor = film_processor
+        self.decoder = decoder
+
+    def forward(self, inputs: dict[str, torch.Tensor]):
+        """
+        Performs a forward pass through the model using the provided input tensors.
+        Args:
+            inputs (Dict[str, torch.Tensor]): A dictionary containing input tensors with keys "ko_vec" and "exp_vec".
+        Returns:
+            torch.Tensor: The output tensor produced by the model.
+        """
+
+        ko_vec = inputs["ko_vec"]  # Perturbation embedding
+        exp_vec = inputs["exp_vec"]  # Control expression
+
+        ko_processed = self.ko_processor(ko_vec)
+        exp_processed = self.exp_processor(exp_vec)
+
+        # Film processing
+        gamma_p, beta_p = self.film_processor(ko_processed).chunk(2, -1)
+
+        latent = gamma_p * exp_processed + beta_p
+
+        output: torch.Tensor = self.decoder(latent)
+
+        y_pred = exp_vec + output
+
+        return y_pred.relu()
 
 
 if __name__ == "__main__":

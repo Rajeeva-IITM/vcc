@@ -38,20 +38,25 @@ net:
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.SoftDiceLoss
-      temperature: 2
-      threshold: 0
+    # - _target_: src.models.components.loss_functions.SoftDiceLoss
+    #   temperature: 2
+    #   threshold: 0
     # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
     #   temperature: 0.75
     #   threshold: 1.5
     #   beta: 1
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
+    - _target_: src.models.components.loss_functions.DiffGeneBCELoss
+      device: cuda:3
+      pos_weight: 10
+      temperature: 0.1
+      threshold: 1
+    # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
   weights:
     - 1
     - 1
-    - 0.1
+    # - 0.1
     # - 1e-5
 optimizer:
   _target_: torch.optim.AdamW
