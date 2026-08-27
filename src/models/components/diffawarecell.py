@@ -110,6 +110,12 @@ class GatedProcessingNN(ProcessingNN):
         self.gate_projection = nn.Sequential(
             nn.Linear(self.hidden_size, self.output_size), nn.Sigmoid()
         )
+        # Exposed so GateSparsityLoss can constrain it and so a run can be
+        # checked for the failure that matters: a gate pinned near 1.0 collapses
+        # control + gate*(raw - control) back to raw, i.e. no mask at all.
+        # Kept attached to the graph -- the sparsity loss backprops through it --
+        # so readers that only want the value must call .detach() themselves.
+        self.last_gate: torch.Tensor = torch.Tensor()
 
     def forward(self, x: torch.Tensor, control_exp: torch.Tensor) -> torch.Tensor:
         if self.no_processing:
@@ -126,6 +132,7 @@ class GatedProcessingNN(ProcessingNN):
 
         # DEG gate
         gate = self.gate_projection(processed)
+        self.last_gate = gate
 
         # Gated output: deviations only where gate allows
         y_pred: torch.Tensor = control_exp + gate * (raw_pred - control_exp)
@@ -367,3 +374,51 @@ class CellModel(nn.Module):
         output = self.decoder(latent)
 
         return output
+
+
+class GatedCellModel(CellModel):  # the CellModel defined in this module
+    """Bilinear (or sum/product/concat) fusion with the gated delta decoder.
+
+    ``DiffAwareCellModelAttention`` always runs its attention module -- setting
+    ``fusion_type: bilinear`` there only changes what feeds Q/K/V, and the
+    attention itself treats the 256 latent channels as a sequence whose token
+    embeddings are ``nn.Linear(1, embed_dim)`` of a single scalar. With no real
+    per-feature embeddings that is not buying anything.
+
+    This class keeps the part that matters -- ``GatedProcessingNN``, which
+    predicts ``control_exp + gate * (raw_pred - control_exp)`` -- and drops the
+    attention entirely. Everything else, including the bilinear fusion, is
+    inherited from ``CellModel``.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # CellModel built a plain ProcessingNN; swap in the gated variant.
+        self.decoder = GatedProcessingNN(**kwargs["decoder_args"])
+
+    def forward(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """As CellModel, except the decoder also sees the control expression."""
+        ko_processed = self.ko_processor(inputs["ko_vec"])
+        exp_processed = self.exp_processor(inputs["exp_vec"])
+
+        match self.fusion:
+            case "sum":
+                fused = ko_processed + exp_processed
+            case "product":
+                fused = ko_processed * exp_processed
+            case "concat":
+                fused = torch.cat([ko_processed, exp_processed], dim=1)
+            case "bilinear":
+                fused = self.bilinear(ko_processed, exp_processed)
+            case _:
+                raise ValueError(
+                    "fusion_type should be one of ['sum','product','concat','bilinear']"
+                )
+
+        latent = self.concat_processor(fused)
+        return self.decoder(latent, inputs["exp_vec"])
+
+    @property
+    def last_gate(self) -> torch.Tensor:
+        """Gate activations from the most recent forward pass, for diagnostics."""
+        return self.decoder.last_gate

@@ -1,14 +1,22 @@
+import traceback
+
 import hydra
 import lightning
 import rich
 import rootutils
 import torch
 import wandb
+from dotenv import load_dotenv
 from lightning import LightningDataModule, LightningModule, Trainer
 from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
 from src.utils.umap_utilities import perform_umap, plot_output_plotly  # noqa: E402
+
+# The configs resolve paths via ${oc.env:...}. Load .env before Hydra composes
+# them so the file the README asks you to create is actually honoured, rather
+# than requiring the variables to be exported by hand.
+load_dotenv()
 
 torch.cuda.empty_cache()
 
@@ -66,18 +74,29 @@ def main(conf: DictConfig):
             y_pred = torch.cat(preds)
             console.log(f"Predicted expression shape: {y_pred.shape}")
             torch.save(y_pred, save_path + "/predictions.pt")
-            console.log("Running UMAP")
-            # reducer = UMAP(n_neighbors=50)
-            reduced = perform_umap(y_pred, genes=datamodule.test_data.perturbed_genes)
-            fig = plot_output_plotly(reduced)
-            fig.write_html(save_path + "/UMAP-figure.html", auto_play=False)
-            table = wandb.Table(columns=["UMAP-figure"])
-            table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
+
+            # Only the embedding datamodule exposes per-cell gene labels; skip
+            # the plot rather than failing the run if they are unavailable.
+            genes = getattr(datamodule.test_data, "perturbed_genes", None)
+            if genes is None:
+                console.log("test_data has no `perturbed_genes`; skipping UMAP")
+            else:
+                console.log("Running UMAP")
+                # UMAP goes through numpy, which has no bfloat16; under
+                # `bf16-mixed` the predictions come back as bfloat16.
+                reduced = perform_umap(y_pred.float(), genes=genes)
+                fig = plot_output_plotly(reduced)
+                fig.write_html(save_path + "/UMAP-figure.html", auto_play=False)
+                table = wandb.Table(columns=["UMAP-figure"])
+                table.add_data(wandb.Html(save_path + "/UMAP-figure.html"))
 
             # logger.experiment.log({"UMAP-figure": wandb.Plotly(fig)})
 
-    except Exception as e:
-        console.log(f"There was this error: {e}")
+    except Exception:
+        # Log the full traceback: a bare `except` here previously hid a broken
+        # predict path behind a one-line message for weeks.
+        console.log("[red]Prediction/evaluation step failed:[/red]")
+        console.log(traceback.format_exc())
     wandb.finish()
 
 

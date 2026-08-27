@@ -1,0 +1,31 @@
+# Reads the original .h5ad files directly instead of the parquet artefacts that
+# src/prepare_data.py derives from them.
+#
+# Numerically equivalent to `dataset_cp10k` -- the same counts-per-10k + log1p
+# normalisation, applied on the fly -- but it needs one path instead of five,
+# because controls live inside the h5ad tagged `target_gene == "non-targeting"`
+# and the train/validation split is derived from the perturbations present.
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/train/adata_Training.h5ad
+    # Adding the other two 2025 splits raises coverage from 150 to 300
+    # perturbations, at ~3x the memory (~16 GB per file, held sparse).
+    # - ${paths.data_dir}/2025/validation/adata_Validation.h5ad
+    # - ${paths.data_dir}/2025/test/adata_Test.h5ad
+  gene_embedding_path: ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  # Set to a headerless CSV of gene names to permute the columns into that
+  # panel's order. The 2025 files already match 2025/gene_names.csv.
+  gene_list_path: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  seed: ${seed}
+  num_workers: 8
+  batch_size: 128
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S} # Always with respect to the top config

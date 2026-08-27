@@ -99,7 +99,7 @@ class VCCDataset(Dataset):
         Args:
             index (int): Index of the sample to retrieve.
         Returns:
-            Tuple[Dict[str, np.ndarray], np.ndarray]:
+            Tuple[Dict[str, torch.Tensor], torch.Tensor]:
                 A tuple containing a dictionary with knockout gene vector ('ko_vec') and control expression vector ('exp_vec'),
                 and the knockout expression tensor as the target.
         """

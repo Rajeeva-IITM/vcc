@@ -25,19 +25,16 @@ loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
     - _target_: src.models.components.loss_functions.SoftDiceLoss
-      temperature: 1
-      threshold: 0
+      temperature: 0.25
+      threshold: 0.4
     - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
-      temperature: 0.75
-      threshold: 1.5
-      beta: 1
+      temperature: 0.25
+      threshold: 0.4
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
     - _target_: src.models.components.loss_functions.DiffGeneBCELoss
-      device: cuda:2
       pos_weight: 10
-      temperature: 0.1
-      threshold: 1
-    # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
+      temperature: 0.15 # CP10K-calibrated (~10% DE); was 0.1/1 on log1p(raw)
+      threshold: 0.4
     # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
   weights:
     - 1

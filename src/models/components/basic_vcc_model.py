@@ -126,7 +126,7 @@ class ProcessingNN(nn.Module):
 
         if self.residual_connection:
             # Project to output and enforce positivity - shape batch x hidden_size -> batch x output_size
-            output = self.positive_enforcer(
+            output: torch.Tensor = self.positive_enforcer(
                 self.output_projection(processed_through_sequence + projection)
             )
             return output

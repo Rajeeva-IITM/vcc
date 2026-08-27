@@ -1,3 +1,11 @@
+# `model_attention` (the gated delta decoder, GatedProcessingNN) with the
+# composite loss replaced by a plain MSE.
+#
+# The gate is unsupervised either way -- nothing in the losses references it.
+# Under plain MSE it is free to sit at 1.0 everywhere, which collapses
+#   y = control + gate * (raw - control)
+# back to y = raw. That is the point of this run: it measures what the gated
+# architecture does with no DE-weighting propping it up.
 _target_: src.models.vcc_lightning.VCCModule
 net:
   _target_: src.models.components.diffawarecell.DiffAwareCellModelAttention
@@ -38,23 +46,9 @@ net:
 loss_fn:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    # - _target_: src.models.components.loss_functions.SoftDiceLoss
-    #   temperature: 2
-    #   threshold: 0
-    # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
-    #   temperature: 0.75
-    #   threshold: 1.5
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    - _target_: src.models.components.loss_functions.DiffGeneBCELoss
-      pos_weight: 10
-      temperature: 0.15 # CP10K-calibrated (~10% DE); was 0.1/1 on log1p(raw)
-      threshold: 0.4
-    # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
+    - _target_: src.models.components.loss_functions.MyMSELoss
   weights:
     - 1
-    - 1
-    # - 0.1
-    # - 1e-5
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true

@@ -48,29 +48,24 @@ primary_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
     - _target_: src.models.components.loss_functions.SoftJaccardLoss
-      temperature: 0.1
-      threshold: 1.5
+      temperature: 0.25 # CP10K-calibrated; was 0.1/1.5 on log1p(raw)
+      threshold: 0.4
     - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
-      temperature: 0.1
-      threshold: 1.5
-      beta: 1
+      temperature: 0.25
+      threshold: 0.4
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     # - _target_: src.models.components.loss_functions.AdjacencySimilarityLoss
   weights:
     - 1
     - 1
     - 0.75
-    - 0.25
 contrastive_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
       # temperature: 0.1
       alpha: 1
   weights:
-    - 1.5
     - 1
 contrastive_weight: 1
 optimizer:

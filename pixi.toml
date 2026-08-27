@@ -17,7 +17,7 @@ seaborn = ">=0.13.2,<0.14"
 rich = ">=14.0.0,<15"
 hydra-core = ">=1.3.2,<2"
 pre-commit = ">=4.2.0,<5"
-anndata = ">=0.11.4,<0.12"
+anndata = ">=0.13.2,<0.14"
 scikit-learn = ">=1.7.1,<2"
 hvplot = ">=0.11.3,<0.12"
 wandb = ">=0.21.0,<0.22"
@@ -33,6 +33,12 @@ vl-convert-python = ">=1.7.0,<2"
 plotly = ">=6.3.0,<7"
 dvc = ">=3.63.0,<4"
 vega_datasets = ">=0.9.0,<0.10"
+# Imported at module level by src/utils/umap_utilities.py (and therefore by
+# src/train.py); previously present only as an unlocked local install.
+umap-learn = ">=0.5.6,<0.6"
+# src/train.py and the notebooks read .env through this.
+python-dotenv = ">=1.0,<2"
+marimo = ">=0.24.0,<0.25"
 
 [system-requirements]
 cuda = "12.0"
@@ -41,3 +47,4 @@ cuda = "12.0"
 icecream = ">=2.1.5, <3"
 rootutils = ">=1.0.7, <2"
 optuna-dashboard = ">=0.19.0, <0.20"
+vcc-cli = ">=0.1.0, <0.2"

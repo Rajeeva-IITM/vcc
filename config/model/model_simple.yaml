@@ -12,9 +12,7 @@ loss_fn:
     # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
     #   temperature: 0.75
     #   threshold: 1.5
-    #   beta: 1
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    # - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
   weights:
     - 1

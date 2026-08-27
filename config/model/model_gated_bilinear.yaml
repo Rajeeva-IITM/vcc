@@ -1,0 +1,75 @@
+# Bilinear fusion + the gated delta decoder, no attention. Plain MSE.
+#
+# `model_attention` runs its attention module regardless of `fusion_type`, and
+# that attention treats the 256 latent channels as a sequence whose token
+# embeddings are nn.Linear(1, embed_dim) of a single scalar. Without real
+# per-feature embeddings there is nothing there to attend over, so this drops it
+# and keeps only the part being tested: GatedProcessingNN, which predicts
+#   y = control_exp + gate * (raw_pred - control_exp)
+#
+# GateSparsityLoss holds the gate near the measured DE rate. Without it the gate
+# drifted to 0.87 by epoch 10 of a plain-MSE run, which collapses the expression
+# to y = raw_pred and makes the mask inert. Watch the logged `*/gate` metric.
+_target_: src.models.vcc_lightning.VCCModule
+net:
+  _target_: src.models.components.diffawarecell.GatedCellModel
+  ko_processor_args:
+    input_size: 256
+    hidden_size: 512
+    num_hidden_layers: 3
+    output_size: 256
+    dropout: 0.0
+    activation: relu
+  exp_processor_args:
+    input_size: 18080
+    hidden_size: 512
+    num_hidden_layers: 4
+    output_size: 256
+    dropout: 0.0
+    activation: relu
+  fused_processor_args:
+    input_size: 256
+    hidden_size: 128
+    num_hidden_layers: 2
+    output_size: 256
+    dropout: 0.0
+    activation: relu
+    residual_connection: false
+    no_processing: true
+  decoder_args:
+    input_size: 256
+    hidden_size: 2048
+    num_hidden_layers: 4
+    output_size: ${model.net.exp_processor_args.input_size}
+    dropout: 0.0
+    activation: gelu
+    # Internal hidden-space skip (processed + projection). NOT a control->output
+    # connection -- the delta from control is the gate expression above.
+    residual_connection: True
+    ensure_output_positive: True
+  fusion_type: bilinear
+loss_fn:
+  _target_: src.models.components.loss_functions.CompositeLoss
+  loss_functions:
+    - _target_: src.models.components.loss_functions.MyMSELoss
+    # Two-sided KL pulling mean gate activation toward the 2.3% DE rate measured
+    # by Mann-Whitney over all 300 perturbations (FDR<0.05, |log2FC|>=0.25).
+    # Weight 0.01 makes the term ~54% of the MSE at gate=0.87 and ~1% by the time
+    # the gate reaches 0.1, so it pushes hard while wrong and then gets out of the
+    # way. Drop to 0.003 for a gentler pull.
+    - _target_: src.models.components.loss_functions.GateSparsityLoss
+      target_rate: 0.023
+      mode: kl
+      per_cell: true
+  weights:
+    - 1
+    - 0.01
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-5
+  weight_decay: 1e-5
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  _partial_: true
+  T_0: 15

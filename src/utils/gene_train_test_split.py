@@ -43,7 +43,9 @@ def gene_train_test_split(
         int
     )  # Number of genes not present in the train split
 
-    test_genes = rng.choice(unique_genes, gene_test_size)
+    # replace=False: sampling with replacement silently holds out fewer distinct
+    # genes than requested (~29 instead of 30 at test_size=0.2).
+    test_genes = rng.choice(unique_genes, gene_test_size, replace=False)
 
     test_indices: list[int] = np.where(np.isin(gene_names, test_genes))[0].tolist()
     train_indices: list[int] = np.where(~np.isin(gene_names, test_genes))[0].tolist()

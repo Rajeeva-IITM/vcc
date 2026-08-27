@@ -41,29 +41,25 @@ primary_loss:
   loss_functions:
     - _target_: src.models.components.loss_functions.HybridGeneLoss
       alpha: 3
-      temperature: 0.25
+      temperature: 0.1 # CP10K-calibrated; was 0.25 on log1p(raw)
       gamma: 1
     - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
   weights:
     - 1.5
     - 0.5
-    - 0.25
 contrastive_loss:
   _target_: src.models.components.loss_functions.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.PerturbationSimilarityLoss
     - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
       temperature: 0.5
       alpha: 2
   weights:
-    - 1
     - 0.5
 contrastive_weight: 1
 consistency_loss:
   _target_: torch.nn.MSELoss
 consistency_loss_weight: 1
-control_std: ${paths.data_dir}/log-processed-data/control_expression_std.pt
+control_std: ${paths.data_dir}/cp10k-processed-data/control_expression_std.pt
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true

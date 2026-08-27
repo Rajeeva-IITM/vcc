@@ -56,7 +56,10 @@ class VCCModule(LightningModule):
         self.criterion = loss_fn
         self.mae = torchmetrics.functional.mean_absolute_error
         self.mse = torchmetrics.functional.mean_squared_error
-        self.jaccard_loss = lf.SoftJaccardLoss()
+        # Logged as a metric only. Thresholds match the CP10K calibration used in
+        # config/model/*.yaml; the defaults (threshold=1) select ~0.26% of
+        # gene-cells on this scale and make the metric uninformative.
+        self.jaccard_loss = lf.SoftJaccardLoss(temperature=0.25, threshold=0.4)
         # self.train_mae = torchmetrics.MeanAbsoluteError()
         # # self.train_cosine = torchmetrics.CosineSimilarity(reduction="mean")
         # self.train_mse = torchmetrics.MeanSquaredError()
@@ -114,8 +117,19 @@ class VCCModule(LightningModule):
         Calculates the three losses: Primary, contrastive and consistency
         """
         X, y = batch
+        # GatedProcessingNN records its DEG gate on the decoder during forward,
+        # which _calculate_losses is always called straight after. Passed through
+        # so GateSparsityLoss can constrain it; every other loss ends in **kwargs
+        # and ignores it, and nets without a gate pass None.
+        gate = getattr(getattr(self.net, "decoder", None), "last_gate", None)
+        if gate is not None and gate.numel() == 0:
+            gate = None
         loss: torch.Tensor = self.criterion(
-            y_pred, y, control_exp=X["exp_vec"], gene_embeddings=X["ko_vec"]
+            y_pred,
+            y,
+            control_exp=X["exp_vec"],
+            gene_embeddings=X["ko_vec"],
+            gate=gate,
         )  # For some losses
 
         return {
@@ -139,6 +153,7 @@ class VCCModule(LightningModule):
             y_pred.T, y.T
         ).mean()  # Only creates an approximation but this accumulates in the gpu if left uncomputed
 
+        gate = getattr(getattr(self.net, "decoder", None), "last_gate", None)
         gene_level_variance = self.train_genevar.forward(y_pred, y)
         diff_exp = self.train_diffexp.forward(y_pred, y, X["exp_vec"])
         psl = self.train_psl.forward(y_pred, y, X["ko_vec"])
@@ -152,6 +167,13 @@ class VCCModule(LightningModule):
             step.format("genevar"): gene_level_variance,
             step.format("diff_exp"): diff_exp,
             step.format("pertloss"): psl,
+            # The single number that says whether the mask is doing anything:
+            # near 1.0 means y = raw_pred and the gate is inert.
+            **(
+                {step.format("gate"): gate.detach().float().mean()}
+                if gate is not None and gate.numel()
+                else {}
+            ),
         }
 
     def training_step(

@@ -1,0 +1,27 @@
+# CP10K-normalised data + GO-derived perturbation embeddings.
+#
+# This is the default. It differs from `dataset_embedding.yaml` (kept as legacy)
+# in two ways:
+#   1. expression comes from cp10k-processed-data/, produced by src/prepare_data.py,
+#      rather than log-processed-data/ which is log1p(raw counts) and therefore
+#      dominated by per-cell sequencing depth.
+#   2. the perturbation embedding is the Poincare GO embedding rather than
+#      `quantiles-train_expression`. The quantile embedding only encodes a gene's
+#      own expression distribution and has no negative pairwise cosines, which
+#      makes WeightedContrastiveLoss return exactly zero.
+datamodule:
+  _target_: src.data.vcc_embedding_module.VCCDataModule
+  train_exp_data_path: ${paths.data_dir}/cp10k-processed-data/training_data-counts.parquet
+  gene_embedding_path: ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  train_ko_data_path: ${paths.data_dir}/processed-data/training_data-row_metadata.csv
+  control_data_path: ${paths.data_dir}/cp10k-processed-data/control_exp_data.parquet
+  test_ko_data_path: ${paths.data_dir}/processed-data/pert_counts_Validation.csv
+  test_exp_data_path: ${paths.data_dir}/cp10k-processed-data/control_exp_data.parquet
+  seed: ${seed}
+  num_workers: 8
+  batch_size: 128
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S} # Always with respect to the top config

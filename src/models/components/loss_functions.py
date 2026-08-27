@@ -4,8 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_scatter
-import torchmetrics
-from torchmetrics.functional import pairwise_cosine_similarity
 
 
 class DiffGeneBCELoss(nn.Module):
@@ -20,7 +18,6 @@ class DiffGeneBCELoss(nn.Module):
         threshold: float = 1,
         pos_weight: float | None = None,
         reduction: str = "mean",
-        device: str | torch.device = "cpu",
     ) -> None:
         super().__init__()
 
@@ -28,13 +25,19 @@ class DiffGeneBCELoss(nn.Module):
         self.threshold = threshold
         self.reduction = reduction
 
+        # Registered as a buffer so Lightning moves it with the module. Passing an
+        # explicit device here used to pin it to one GPU and crash on every other.
+        # persistent=False keeps it out of the state_dict: it is a config constant,
+        # not learned state, and adding a key would break strict loads of
+        # checkpoints saved before this change.
         if pos_weight is not None:
-            param_pos_weight = torch.tensor([pos_weight], dtype=torch.float).to(device)
+            self.register_buffer(
+                "pos_weight",
+                torch.tensor([pos_weight], dtype=torch.float),
+                persistent=False,
+            )
         else:
-            param_pos_weight = None
-        self.bce = nn.BCEWithLogitsLoss(
-            pos_weight=param_pos_weight, reduction=reduction
-        )
+            self.pos_weight = None
 
     def forward(
         self,
@@ -50,7 +53,12 @@ class DiffGeneBCELoss(nn.Module):
 
         true_probs = true_lfc.sigmoid()
 
-        return self.bce(predicted_lfc, true_probs)
+        return F.binary_cross_entropy_with_logits(
+            predicted_lfc,
+            true_probs,
+            pos_weight=self.pos_weight,
+            reduction=self.reduction,
+        )
 
 
 class SoftDiceLoss(nn.Module):
@@ -469,14 +477,12 @@ class DiffExpAwareMSELoss(nn.Module):
     def __init__(
         self,
         temperature: float = 1,
-        beta: float = 1,
         threshold: float = 1,
         reduction: str | None = "mean",
     ) -> None:
         super(DiffExpAwareMSELoss, self).__init__()
 
         # sigmoid part - https://www.desmos.com/calculator/efw5ylni45
-        self.beta = beta  # Weight for direction loss
         self.reduction = reduction
         self.temperature = temperature  # Determines sharpness of sigmoid function, weight is determined by
         # how much bigger the fold change is from the threshold
@@ -509,15 +515,12 @@ class DiffExpAwareMSELoss(nn.Module):
         # weights = weights * weights.mean(dim=-1).pow(-1).view(-1,1) # Normalize with mean
         # weights = weights * 100 # fixed for now, must be a hyperparameter
         # mse_calc = (y_pred - y_true) ** 2
-        mse_calc = scaled_weights * (y_pred - y_true) ** 2
-        # print(mse_calc)
+        calc = scaled_weights * (y_pred - y_true) ** 2
+        # print(calc)
 
-        # 2. Direction control
-        direction_calc = (
-            torch.sign((y_true - control_exp)) - torch.sign((y_pred - control_exp))
-        ) ** 2
-
-        calc = mse_calc + (direction_calc * self.beta)
+        # A `torch.sign`-based direction term used to be added here. `sign` is
+        # piecewise constant, so it contributed exactly zero gradient and only
+        # shifted the reported loss value. Removed.
 
         match self.reduction:
             case "sum":
@@ -638,9 +641,10 @@ class WeightedContrastiveLoss(nn.Module):
         # positive_gene_sim = F.relu(gene_sim_off_diag)  # Care more about similar genes
         # positive_gene_sim = gene_sim_off_diag
 
-        # Sign is preserved for all powers
-        weights = torch.sign(gene_sim_off_diag) * torch.pow(
-            gene_sim_off_diag, self.alpha
+        # Sign is preserved for all powers. Take the power of the magnitude:
+        # torch.pow on a negative base is NaN for any non-integer alpha.
+        weights = torch.sign(gene_sim_off_diag) * gene_sim_off_diag.abs().pow(
+            self.alpha
         )  # Alpha to increase the focus of weights
 
         exp_pred_sim = torch.exp(pred_sim_off_diag)
@@ -678,53 +682,11 @@ class WeightedContrastiveLoss(nn.Module):
         return loss
 
 
-class PerturbationSimilarityLoss(nn.Module):
-    """
-    Measuring perturbation similarity
-    """
-
-    def __init__(self, eps=1e-6, reduction: str | None = "mean") -> None:
-        super().__init__()
-        self.eps = eps
-        self.reduction = reduction
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        gene_embeddings: torch.Tensor,
-        **kwargs,
-    ):
-        """
-        Calculate the Loss
-
-        Args:
-            y_pred (torch.Tensor): Predicted features
-            y_true (torch.Tensor): Not used, here for consistency
-            gene_embeddings (torch.Tensor): Gene Embeddings
-
-        Returns:
-            torch.Tensor (loss)
-        """
-
-        triu_mask = torch.triu(
-            torch.ones(y_pred.shape[0], y_pred.shape[0], dtype=torch.bool), diagonal=1
-        )
-        pairwise_similarities = pairwise_cosine_similarity(y_pred)[triu_mask]
-
-        gene_distances = pairwise_cosine_similarity(gene_embeddings)[triu_mask]
-
-        calc = 1 - torchmetrics.functional.spearman_corrcoef(
-            pairwise_similarities, gene_distances
-        )
-
-        match self.reduction:
-            case "sum":
-                return calc.sum()
-            case "mean":
-                return calc.mean()
-            case _:
-                return calc
+# `PerturbationSimilarityLoss` was removed here. It scored 1 - spearman(pairwise
+# prediction similarity, pairwise gene similarity), but torchmetrics computes
+# Spearman ranks via `argsort`, so its output carried no `grad_fn` at all and it
+# contributed exactly zero gradient despite being weighted in several configs.
+# `WeightedContrastiveLoss` covers the same intent and is differentiable.
 
 
 class BatchVariance(nn.Module):
@@ -1031,7 +993,10 @@ class CompositeLoss(nn.Module):
         assert len(loss_functions) == len(weights), (
             "Number of weights must be equal to the number of loss functions provided"
         )
-        self.loss_functions = loss_functions
+        # ModuleList, not a plain list: otherwise child losses are invisible to
+        # `.parameters()` and `.to(device)`, so any loss holding a parameter or
+        # buffer silently never trains and stays on the wrong device.
+        self.loss_functions = nn.ModuleList(loss_functions)
         self.weights = weights
 
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
@@ -1125,3 +1090,89 @@ if __name__ == "__main__":
     loss = loss_fn.forward(preds, truths)
 
     print(f"Loss: {loss:.5f}")
+
+
+class GateSparsityLoss(nn.Module):
+    """Pull the decoder's DEG gate toward a target activation rate.
+
+    ``GatedProcessingNN`` predicts ``y = control + gate * (raw - control)``, where
+    ``gate`` is a per-gene sigmoid. Nothing else in the objective references it,
+    and left free it drifts toward 1.0 -- measured at 0.87 by epoch 10 of a plain
+    MSE run -- which makes the expression collapse to ``y = raw`` and the mask
+    inert.
+
+    This penalises the *mean* activation against a target rate, as the KL between
+    two Bernoullis::
+
+        KL(rho || rho_hat) = rho*log(rho/rho_hat) + (1-rho)*log((1-rho)/(1-rho_hat))
+
+    Constraining the mean rather than each element is deliberate: an elementwise
+    penalty drives every gate to ``rho``, which is uniform and masks nothing. The
+    mean constraint leaves the model free to open a few genes fully and close the
+    rest, and the data term decides which. The uniform solution minimises this
+    term alone but not the total loss, since ``gate == rho`` everywhere makes
+    ``y ~ control`` and the reconstruction term punishes the genes that do move.
+
+    ``mode="l1"`` is the plain sparsity alternative. It only pushes down, so an
+    over-large weight closes the gate entirely and degenerates to ``y = control``;
+    the KL is two-sided and targets a rate, which makes the weight less delicate.
+
+    Parameters
+    ----------
+    target_rate : float
+        Fraction of genes expected to deviate from control. Default 0.023, the
+        rate measured by Mann-Whitney across all 300 perturbations of the 2025
+        data at FDR < 0.05 and |log2FC| >= 0.25.
+    mode : {"kl", "l1"}
+        Two-sided KL toward ``target_rate``, or one-sided L1 toward zero.
+    per_cell : bool
+        Average the gate over genes within each cell (default) -- "each cell
+        deviates from its control in ~target_rate of its genes". When False,
+        average over the batch per gene instead -- "each gene moves in
+        ~target_rate of cells".
+    eps : float
+        Clamp keeping the log arguments away from 0 and 1.
+    """
+
+    def __init__(
+        self,
+        target_rate: float = 0.023,
+        mode: str = "kl",
+        per_cell: bool = True,
+        eps: float = 1e-6,
+    ) -> None:
+        super().__init__()
+
+        if not 0.0 < target_rate < 1.0:
+            raise ValueError(f"target_rate must be in (0, 1), got {target_rate}")
+        if mode not in ("kl", "l1"):
+            raise ValueError(f"mode must be 'kl' or 'l1', got {mode!r}")
+
+        self.target_rate = target_rate
+        self.mode = mode
+        self.per_cell = per_cell
+        self.eps = eps
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gate: torch.Tensor | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Zero when the net has no gate, so this is safe in any CompositeLoss."""
+        if gate is None:
+            return torch.zeros((), device=y_pred.device, dtype=y_pred.dtype)
+
+        if self.mode == "l1":
+            return gate.abs().mean()
+
+        # Mean activation: over genes within a cell, or over cells within a gene.
+        rho_hat = gate.mean(dim=-1) if self.per_cell else gate.mean(dim=0)
+        rho_hat = rho_hat.clamp(self.eps, 1.0 - self.eps)
+        rho = self.target_rate
+
+        kl = rho * torch.log(rho / rho_hat) + (1 - rho) * torch.log(
+            (1 - rho) / (1 - rho_hat)
+        )
+        return kl.mean()

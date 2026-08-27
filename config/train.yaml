@@ -1,5 +1,5 @@
 defaults:
-  - data: dataset
+  - data: dataset_cp10k
   - model: model
   - trainer: trainer
   - callbacks: defaults
