@@ -8,7 +8,12 @@ version = "0.1.0"
 [tasks]
 
 [dependencies]
-polars = ">=1.31.0,<2"
+# gpudge (GPU DE backend) requires polars>=1.38 and scipy>=1.17. Our own code only
+# touches the stable polars core and scipy.sparse/scipy.stats, so the bumps are safe.
+polars = ">=1.38,<2"
+scipy = ">=1.17,<2"
+# gpudge dependency (HDF5 compression plugins); pure plugin, no API surface of ours.
+hdf5plugin = ">=6.0.0"
 notebook = ">=7.4.4,<8"
 pytorch-gpu = ">=2.7.1,<3"
 transformers = ">=4.53.0,<5"
@@ -39,6 +44,7 @@ umap-learn = ">=0.5.6,<0.6"
 # src/train.py and the notebooks read .env through this.
 python-dotenv = ">=1.0,<2"
 marimo = ">=0.24.0,<0.25"
+huggingface_hub = ">=0.36.0,<0.37"
 
 [system-requirements]
 cuda = "12.0"
@@ -48,3 +54,8 @@ icecream = ">=2.1.5, <3"
 rootutils = ">=1.0.7, <2"
 optuna-dashboard = ">=0.19.0, <0.20"
 vcc-cli = ">=0.1.0, <0.2"
+cell-eval2 = ">=0.16.0, <0.17"
+graphifyy = ">=0.9.53, <0.10"
+# GPU differential-expression backend (torch-based, not cupy). Lets score_local.py run
+# cell-eval2 with de.backend=gpudge/device=cuda instead of the multi-hour scanpy CPU path.
+gpudge = ">=0.9.1, <0.10"
