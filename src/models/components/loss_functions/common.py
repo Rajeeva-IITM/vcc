@@ -1,125 +1,16 @@
+"""Loss terms and regularizers agnostic to whether the target is expression or velocity.
+
+These operate on ``y_pred``/``y_true`` directly (plain MSE, log-cosh, variance), on the
+gene-embedding geometry (contrastive / Laplacian / adjacency regularizers), or wrap other
+losses (``CompositeLoss``). Space-specific losses live in ``expression`` and ``velocity``.
+"""
+
 from typing import Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_scatter
-
-
-class DiffGeneBCELoss(nn.Module):
-    """
-    Loss applied for each gene of the sample to classify if it is
-    a DEG or not
-    """
-
-    def __init__(
-        self,
-        temperature: float = 0.5,
-        threshold: float = 1,
-        pos_weight: float | None = None,
-        reduction: str = "mean",
-    ) -> None:
-        super().__init__()
-
-        self.temperature = temperature
-        self.threshold = threshold
-        self.reduction = reduction
-
-        # Registered as a buffer so Lightning moves it with the module. Passing an
-        # explicit device here used to pin it to one GPU and crash on every other.
-        # persistent=False keeps it out of the state_dict: it is a config constant,
-        # not learned state, and adding a key would break strict loads of
-        # checkpoints saved before this change.
-        if pos_weight is not None:
-            self.register_buffer(
-                "pos_weight",
-                torch.tensor([pos_weight], dtype=torch.float),
-                persistent=False,
-            )
-        else:
-            self.pos_weight = None
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        control_exp: torch.Tensor,
-        **kwargs,
-    ):
-        predicted_lfc = (
-            torch.abs(y_pred - control_exp) - self.threshold
-        ) / self.temperature
-        true_lfc = (torch.abs(y_true - control_exp) - self.threshold) / self.temperature
-
-        true_probs = true_lfc.sigmoid()
-
-        return F.binary_cross_entropy_with_logits(
-            predicted_lfc,
-            true_probs,
-            pos_weight=self.pos_weight,
-            reduction=self.reduction,
-        )
-
-
-class SoftDiceLoss(nn.Module):
-    """
-    A soft Dice loss to measure how well differentially expressed genes are captured
-    """
-
-    def __init__(
-        self,
-        temperature: float = 0.5,
-        threshold: float = 1,
-        variance_parameter: float = 0.5,
-        reduction: str = "mean",
-    ) -> None:
-        super().__init__()
-
-        self.temperature = temperature
-        self.threshold = threshold
-        self.reduction = reduction
-        self.variance_parameter = variance_parameter
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        control_exp: torch.Tensor,
-        gene_embeddings: torch.Tensor,
-        **kwargs,
-    ):
-        predicted_lfc = (
-            torch.abs(y_pred - control_exp) - self.threshold
-        ) / self.temperature
-        true_lfc = (torch.abs(y_true - control_exp) - self.threshold) / self.temperature
-
-        pred_probs = torch.sigmoid(predicted_lfc)
-        true_probs = torch.sigmoid(true_lfc)
-
-        intersection = torch.sum(pred_probs * true_probs, -1)
-        # union = pred_probs.sum(-1) + true_probs.sum(-1) - intersection
-
-        calc = 1 - (2 * intersection) / (pred_probs.sum(-1) + true_probs.sum(-1) + 1e-8)
-
-        _, indices = gene_embeddings.unique(return_inverse=True, dim=0)
-        loss = torch_scatter.scatter_mean(
-            calc, indices, dim=0
-        )  # Gene wise Dice averaging
-        # std = torch_scatter.scatter_std(calc, indices, dim=0, ) # Buggy - don't use
-
-        # e_loss_2 = torch_scatter.scatter_mean(calc**2, indices, dim=0)
-
-        # variance = e_loss_2 - loss**2 # Var[x] = E[x^2] - (E[x])^2
-
-        final_loss = loss  # + variance * self.variance_parameter
-
-        match self.reduction:
-            case "sum":
-                return final_loss.sum()
-            case "mean":
-                return final_loss.mean()
-            case _:
-                return final_loss
 
 
 class AdjacencySimilarityLoss(nn.Module):
@@ -261,146 +152,6 @@ class LaplacianRegularizerLoss(nn.Module):
         return loss
 
 
-class HybridGeneLoss(nn.Module):
-    """
-    A hybrid loss function that combines a differential expression-aware
-    MSE with a soft similarity loss to train on both absolute values
-    and relative gene importance.
-    """
-
-    def __init__(
-        self,
-        alpha: float = 1.0,
-        temperature: float = 1.0,
-        gamma: float = 0.5,
-        reduction: str = "mean",
-    ) -> None:
-        """
-        Args:
-            alpha (float): Exponent for MSE weighting. Higher values focus more
-                         on the most differentially expressed genes.
-            temperature (float): Temperature for the softmax in the similarity loss.
-                               Lower values create a sharper distribution.
-            gamma (float): A blending factor between 0 and 1. It controls the
-                         strength of the two topk component
-                         loss = weighted_mse + gamma * similarity_loss
-            reduction (str): Reduction to apply to the final loss ('mean' or 'sum').
-        """
-        super(HybridGeneLoss, self).__init__()
-        self.alpha = alpha
-        self.temperature = temperature
-        self.gamma = gamma
-        self.reduction = reduction
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        control_exp: torch.Tensor,
-        **kwargs,
-    ) -> torch.Tensor:
-        """
-        Calculate the Loss
-        """
-
-        # --- 1. Weighted MSE Component ---
-        with torch.no_grad():  # Weights are based on ground truth, no gradient needed
-            weights = torch.abs(y_true - control_exp)
-            # Min-max scale the weights to [0, 1]
-            w_min = torch.min(weights, dim=-1, keepdim=True)[0]
-            w_max = torch.max(weights, dim=-1, keepdim=True)[0]
-            weights = (weights - w_min) / (w_max - w_min + 1e-8)
-            weights = weights**self.alpha
-
-        mse_loss = weights * F.mse_loss(y_pred, y_true, reduction="none")
-
-        # --- 2. Soft Similarity Component ---
-        # Calculate LFCs (adding a small epsilon for numerical stability)
-        # epsilon = 1e-8
-        predicted_lfc = y_pred - control_exp
-        true_lfc = y_true - control_exp
-
-        pred_abs = torch.abs(predicted_lfc)
-        true_abs = torch.abs(true_lfc)
-
-        pred_weights = F.sigmoid(pred_abs / self.temperature)
-        true_weights = F.sigmoid(true_abs / self.temperature)
-
-        similarity = F.cosine_similarity(pred_weights, true_weights, dim=-1)
-        similarity_loss = 1 - similarity
-
-        # --- 3. Combine the Losses ---
-        # The loss for each item in the batch
-        combined_loss = mse_loss.mean(dim=-1) + (self.gamma * similarity_loss)
-
-        # Apply final reduction
-        if self.reduction == "mean":
-            return combined_loss.mean()
-        elif self.reduction == "sum":
-            return combined_loss.sum()
-        else:
-            return combined_loss
-
-
-class SoftJaccardLoss(nn.Module):
-    """
-    A soft jaccard loss to measure how well differentially expressed genes are captured
-    """
-
-    def __init__(
-        self,
-        temperature: float = 0.5,
-        threshold: float = 1,
-        variance_parameter: float = 0.5,
-        reduction: str = "mean",
-    ) -> None:
-        super().__init__()
-
-        self.temperature = temperature
-        self.threshold = threshold
-        self.reduction = reduction
-        self.variance_parameter = variance_parameter
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        control_exp: torch.Tensor,
-        gene_embeddings: torch.Tensor,
-        **kwargs,
-    ):
-        predicted_lfc = (
-            torch.abs(y_pred - control_exp) - self.threshold
-        ) / self.temperature
-        true_lfc = (torch.abs(y_true - control_exp) - self.threshold) / self.temperature
-
-        pred_probs = torch.sigmoid(predicted_lfc)
-        true_probs = torch.sigmoid(true_lfc)
-
-        intersection = torch.sum(pred_probs * true_probs, -1)
-        union = pred_probs.sum(-1) + true_probs.sum(-1) - intersection
-
-        calc = 1 - intersection / (union + 1e-8)
-
-        # unique, indices = gene_embeddings.unique(return_inverse=True, dim=0)
-        # loss = torch_scatter.scatter_mean(calc, indices, dim=0) # Gene wise Jaccard averaging
-        # std = torch_scatter.scatter_std(calc, indices, dim=0, ) # Buggy - don't use
-
-        # e_loss_2 = torch_scatter.scatter_mean(calc**2, indices, dim=0)
-
-        # variance = e_loss_2 - loss**2 # Var[x] = E[x^2] - (E[x])^2
-
-        final_loss = calc  # + variance * self.variance_parameter
-
-        match self.reduction:
-            case "sum":
-                return final_loss.sum()
-            case "mean":
-                return final_loss.mean()
-            case _:
-                return final_loss
-
-
 class GenewiseMSELoss(nn.Module):
     """
     A macro-averaged MSE loss so that all genes are equally given importance to
@@ -458,69 +209,6 @@ class MyMSELoss(nn.Module):
              Tensor (loss)
         """
         calc = ((y_pred - y_true) ** 2).mean(dim=-1)
-
-        match self.reduction:
-            case "sum":
-                return calc.sum()
-            case "mean":
-                return calc.mean()
-            case _:
-                return calc
-
-
-class DiffExpAwareMSELoss(nn.Module):
-    """
-    An MSE loss that focuses on differentially expressed genes with due importance
-    to directionality. Adapted from https://www.nature.com/articles/s41587-023-01905-6
-    """
-
-    def __init__(
-        self,
-        temperature: float = 1,
-        threshold: float = 1,
-        reduction: str | None = "mean",
-    ) -> None:
-        super(DiffExpAwareMSELoss, self).__init__()
-
-        # sigmoid part - https://www.desmos.com/calculator/efw5ylni45
-        self.reduction = reduction
-        self.temperature = temperature  # Determines sharpness of sigmoid function, weight is determined by
-        # how much bigger the fold change is from the threshold
-        self.threshold = (
-            threshold  # Determines anchor of sigmoid (place where value is 0.5)
-        )
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        control_exp: torch.Tensor,
-        **kwargs,
-    ):
-        """
-        Calculate the Differential expression aware MSE Loss
-
-        Args:
-            y_pred (Tensor): Predicted expression
-            y_true (Tensor): True expression
-            control (Tensor): Control expression
-        """
-
-        # 1. Weighted MSE first
-        weights = torch.abs((y_true - control_exp))
-        scaled_weights = torch.sigmoid((weights - self.threshold) / self.temperature)
-        # weights = (weights - weights.min()) / (
-        #     weights.max() - weights.min() + 1e-8
-        # ) ** self.alpha
-        # weights = weights * weights.mean(dim=-1).pow(-1).view(-1,1) # Normalize with mean
-        # weights = weights * 100 # fixed for now, must be a hyperparameter
-        # mse_calc = (y_pred - y_true) ** 2
-        calc = scaled_weights * (y_pred - y_true) ** 2
-        # print(calc)
-
-        # A `torch.sign`-based direction term used to be added here. `sign` is
-        # piecewise constant, so it contributed exactly zero gradient and only
-        # shifted the reported loss value. Removed.
 
         match self.reduction:
             case "sum":
@@ -617,6 +305,10 @@ class WeightedContrastiveLoss(nn.Module):
         batch_size = y_pred.shape[0]
         device = y_pred.device
 
+        # float32 so the cosine/exp/log chain keeps precision under bf16-mixed.
+        y_pred = y_pred.float()
+        gene_embeddings = gene_embeddings.float()
+
         # Calculate cosine distances
 
         pred_sim_mat = (
@@ -662,7 +354,14 @@ class WeightedContrastiveLoss(nn.Module):
         # log_pos = torch.log(positive_component + self.eps)
         # log_neg = torch.log(negative_component + self.eps)
 
-        score = positive_component / (
+        # eps in BOTH numerator and denominator. An anchor whose perturbation has no
+        # embedding-similar neighbour in the batch has positive_component == 0; without the
+        # numerator eps that is score == 0 and -log(0) == +inf, which NaNs the run the first
+        # time such a batch appears (rare per step, near-certain over a full run). With it, a
+        # similar-neighbour-less anchor whose only neighbours are dissimilar is still penalised
+        # (small score -> large finite loss), and an anchor with neither similar nor dissimilar
+        # neighbours (all cosines ~0) scores ~1 -> ~0 loss, i.e. uninformative, as it should be.
+        score = (positive_component + self.eps) / (
             positive_component + negative_component + self.eps
         )
         loss = -torch.log(score).mean()
@@ -680,13 +379,6 @@ class WeightedContrastiveLoss(nn.Module):
         # loss = -torch.log((weighted_pos + self.eps) / (total_sim + self.eps)).mean()
 
         return loss
-
-
-# `PerturbationSimilarityLoss` was removed here. It scored 1 - spearman(pairwise
-# prediction similarity, pairwise gene similarity), but torchmetrics computes
-# Spearman ranks via `argsort`, so its output carried no `grad_fn` at all and it
-# contributed exactly zero gradient despite being weighted in several configs.
-# `WeightedContrastiveLoss` covers the same intent and is differentiable.
 
 
 class BatchVariance(nn.Module):
@@ -721,50 +413,6 @@ class BatchVariance(nn.Module):
                 return calc
 
 
-class DiffExpError(nn.Module):
-    """
-    Measures changes in differential expression between y_pred and y_true
-    compared to the control samples
-    """
-
-    def __init__(self, reduction: str | None = "mean") -> None:
-        super().__init__()
-
-        self.reduction = reduction
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        control_exp: torch.Tensor,
-        **kwargs,
-    ):
-        """
-        Calculate the error
-
-        Args:
-            y_pred (torch.Tensor): Predicted tensor
-            y_true (torch.Tensor): Truth tensor
-
-         Returns:
-             torch.Tensor: loss
-        """
-
-        diff_true = y_pred - control_exp  # Ensure the expression is log transformed
-        diff_pred = y_true - control_exp  # Ensure the expression is log transformed
-
-        calc = 1 - torch.cosine_similarity(
-            diff_true, diff_pred
-        )  # cosine between the differences
-
-        if self.reduction == "sum":
-            return calc.sum()
-        elif self.reduction == "mean":
-            return calc.mean()
-        else:
-            return calc
-
-
 class LogCoshError(nn.Module):
     """
     Log Cosh Loss
@@ -787,122 +435,6 @@ class LogCoshError(nn.Module):
         """
 
         calc = torch.log(torch.cosh(y_pred - y_true))
-
-        if self.reduction == "sum":
-            return calc.sum()
-        elif self.reduction == "mean":
-            return calc.mean()
-        else:
-            return calc
-
-
-# Caveat: Generated by Gemini and I may not fully understand
-class NegativeBinomialLoss(nn.Module):
-    """
-    Negative Binomial Loss with a learnable dispersion parameter.
-
-    Takes predicted counts (mu) and ground truth counts as input.
-    The dispersion parameter `alpha` is a single value learned during training,
-    which is suitable when the overdispersion level is constant for the dataset.
-    """
-
-    def __init__(self, eps: float = 1e-8):
-        """
-        Args:
-            eps (float): A small value to add for numerical stability.
-        """
-        super(NegativeBinomialLoss, self).__init__()
-        # Initialize log(alpha) as a learnable parameter.
-        # We learn log(alpha) instead of alpha to ensure alpha is always positive.
-        # Initializing to 0.0 means alpha starts at 1.0.
-        self.log_alpha = nn.Parameter(torch.tensor(0.0))
-        self.eps = eps
-
-    def forward(
-        self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs
-    ) -> torch.Tensor:
-        """
-        Calculates the Negative Binomial loss.
-
-        Args:
-            y_pred (torch.Tensor): The predicted counts (mu). Shape: (batch_size, ...).
-                                   Must be positive. Models often use a Softplus or
-                                   ReLU activation on the final layer to ensure this.
-            y_true (torch.Tensor): The ground truth counts. Shape: (batch_size, ...).
-
-        Returns:
-            torch.Tensor: The mean loss over the batch.
-        """
-        # Ensure y_true and y_pred have the same shape
-        if y_true.dim() != y_pred.dim():
-            y_true = y_true.view_as(y_pred)
-
-        # The predicted values `y_pred` are the mean `mu` of the distribution
-        mu = y_pred
-
-        # Get the dispersion parameter `alpha` from the learnable log_alpha
-        alpha = torch.exp(self.log_alpha) + self.eps
-
-        # For convenience and stability, let theta = 1 / alpha
-        theta = 1.0 / alpha
-
-        # --- Calculate the Negative Log-Likelihood ---
-        # lgamma is the log of the Gamma function, used for numerical stability
-        log_likelihood = (
-            torch.lgamma(y_true + theta)
-            - torch.lgamma(theta)
-            - torch.lgamma(y_true + 1)
-            + theta * torch.log(theta + self.eps)
-            + y_true * torch.log(mu + self.eps)
-            - (theta + y_true) * torch.log(theta + mu + self.eps)
-        )
-
-        # The loss is the negative of the log-likelihood
-        loss = -log_likelihood
-
-        # Return the mean loss over the batch
-        return loss.mean()
-
-
-class MSLE(nn.Module):
-    """
-    Mean Squared Logarithmic Error (MSLE) loss module.
-
-    This loss function computes the mean squared logarithmic error between the predicted and true values.
-    It is particularly useful when targets can span several orders of magnitude and penalizes underestimates more than overestimates.
-
-    Args:
-        reduction (str, optional): Specifies the reduction to apply to the output:
-            'mean' | 'sum' | None. 'mean': the sum of the output will be divided by the number of elements in the output.
-            'sum': the output will be summed. None: no reduction will be applied. Default: 'mean'.
-
-    Shape:
-        - y_pred: (N, *) where * means any number of additional dimensions
-        - y_true: (N, *), same shape as y_pred
-
-    Returns:
-        torch.Tensor: The calculated MSLE loss. If reduction is 'none', returns the unreduced loss with the same shape as input.
-        Otherwise, returns a scalar.
-
-    Example:
-        >>> criterion = MSLE(reduction='mean')
-        >>> y_pred = torch.tensor([2.5, 0.0, 2.0, 7.0])
-        >>> y_true = torch.tensor([3.0, 0.0, 2.0, 8.0])
-        >>> loss = criterion(y_pred, y_true)
-
-    Mean Squared Log Error loss.
-    """
-
-    def __init__(self, reduction: str | None = "mean") -> None:
-        super(MSLE, self).__init__()
-
-        self.reduction = reduction
-
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, **kwargs):
-        """
-        Forward pass
-        """
-        calc = (torch.log1p(y_true) - torch.log1p(y_pred)) ** 2
 
         if self.reduction == "sum":
             return calc.sum()
@@ -1007,89 +539,33 @@ class CompositeLoss(nn.Module):
             y_true (Tensor): Ground truth values.
         Returns:
             Tensor: Computed loss value.
+
+        Side effect: the *unweighted* value of each constituent loss from this call is
+        stashed in ``self.last_components`` (a ``{class_name: detached_scalar}`` dict) so a
+        LightningModule can log each term separately without this loss needing logger access.
+        The unweighted value is the diagnostic scale -- independent of the ``weights`` sweep,
+        it says whether a term is actually contributing. Duplicate class names are
+        disambiguated by position. Detached, so the stash never holds the graph.
         """
 
         final_loss = 0
+        components: dict[str, torch.Tensor] = {}
 
-        for loss_function, weight in zip(self.loss_functions, self.weights):
-            final_loss += weight * loss_function.forward(y_pred, y_true, **kwargs)
+        for i, (loss_function, weight) in enumerate(
+            zip(self.loss_functions, self.weights)
+        ):
+            term = loss_function.forward(y_pred, y_true, **kwargs)
+
+            name = type(loss_function).__name__
+            if name in components:
+                name = f"{name}_{i}"
+            components[name] = term.detach()
+
+            final_loss = final_loss + weight * term
+
+        self.last_components = components
 
         return final_loss
-
-
-# Unclean compositeLosses
-#
-
-
-class MSEandDiffExpLoss(nn.Module):
-    """
-    A combination of MSE and Differential Expression loss.
-    Won't work smoothly in the `CompositeLoss` class because
-    the former requires two inputs while the latter requries three
-    """
-
-    def __init__(
-        self, weights: list[int] = [1, 1], reduction: str | None = "mean"
-    ) -> None:
-        super().__init__()
-
-        self.weights = weights
-        self.mse = torch.nn.MSELoss(reduction=reduction)
-        self.diffexp = DiffExpError(reduction=reduction)
-
-    def forward(self, y_pred, y_true, **kwargs):
-        """
-        Calculate the Loss
-        """
-        mse_loss = self.mse.forward(y_pred, y_true)
-        diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
-
-        return self.weights[0] * mse_loss + self.weights[1] * diffexp
-
-
-class MDPLoss(nn.Module):
-    """
-    A combination of MSE, Diff Exp and Perturbation sensitivity losses.
-    Because of the different requirements of each of the losses Composite loss won't work
-    Play around with the weights
-    """
-
-    def __init__(
-        self, weights: list[int] = [1, 1, 1], reduction: str | None = "mean"
-    ) -> None:
-        super().__init__()
-
-        self.weights = weights
-        self.mse = torch.nn.MSELoss(reduction=reduction)
-        self.diffexp = DiffExpError(reduction=reduction)
-        self.psl = WeightedContrastiveLoss()
-
-    def forward(self, y_pred, y_true, **kwargs):
-        """
-        Calculate the Loss
-        """
-        mse_loss = self.mse.forward(y_pred, y_true)
-        diffexp = self.diffexp.forward(y_pred, y_true, **kwargs)
-        psl = self.psl.forward(y_pred, y_true, **kwargs)
-
-        return (
-            (self.weights[0] * mse_loss)
-            + (self.weights[1] * diffexp)
-            + (self.weights[2] * psl)
-        )
-
-
-if __name__ == "__main__":
-    # Verifying composite loss
-
-    loss_fn = CompositeLoss([torch.nn.L1Loss(), WeightedMAELoss(10)], [1, 2])
-
-    preds = torch.randn(5, 10)
-    truths = torch.randn(5, 10)
-
-    loss = loss_fn.forward(preds, truths)
-
-    print(f"Loss: {loss:.5f}")
 
 
 class GateSparsityLoss(nn.Module):
@@ -1176,3 +652,131 @@ class GateSparsityLoss(nn.Module):
             (1 - rho) / (1 - rho_hat)
         )
         return kl.mean()
+
+
+class BatchLaplacianReg(nn.Module):
+    """Batch-only graph-Laplacian (Dirichlet) smoothness on predictions.
+
+    A memory-efficient, velocity-correct sibling of :class:`LaplacianRegularizerLoss`, which
+    materialises an ``18080 x 18080`` matrix via ``y_pred.T @ L @ y_pred``. This computes the
+    identical Dirichlet energy through the ``B x B`` Gram matrix instead, so cost scales with the
+    batch, not the gene panel. Batch-only: it reads just ``y_pred`` and ``gene_embeddings``
+    (the ``ko_vec`` already in every batch) -- no ``control_exp``, no ``ko_id``, no prep files.
+
+    What it penalises
+    -----------------
+    For predictions ``y`` and a gene-embedding affinity ``W`` (cosine similarity, zero diagonal)::
+
+        E = sum_ij W_ij * ||y_i - y_j||^2
+
+    The energy is large when two perturbations CLOSE in embedding space have DIFFERENT predicted
+    responses. Minimising it pulls each perturbation's prediction toward its embedding-neighbours
+    -- partial pooling, a random-effect smoothness prior. Unlike weight decay, which shrinks the
+    perturbation effect toward zero (= the perturbation-blind mean), this shrinks toward the
+    neighbour-predicted response, which is the quantity that transfers to held-out genes.
+
+    Why the same-gene pairs are kept
+    --------------------------------
+    Cells sharing a perturbation carry identical embeddings, so their affinity is ~1 and the term
+    penalises any difference in their predicted velocity. Under ``target_mode="perturbation_mean"``
+    the target ``u = mu_p - x_0`` is identical for those cells, so the penalty is zero at the
+    optimum while enforcing ``v(x_t, t) = v(x_t', t')`` across the flow path. Under
+    ``target_mode="cell"`` (the datamodule default) it additionally smooths per-cell sampling
+    noise, which is benign.
+
+    Efficient form
+    --------------
+    With ``S = y @ y.T`` (the ``B x B`` Gram), ``sq = diag(S) = ||y_i||^2`` and ``deg = W.sum(1)``::
+
+        sum_ij W_ij (||y_i||^2 + ||y_j||^2 - 2 y_i.y_j) = 2 * (deg . sq) - 2 * sum(W * S)
+
+    equal to ``trace(y.T (D - W) y)`` at ``B x B`` cost. The result is divided by the total edge
+    weight ``W.sum()`` (mean squared distance per edge) and by the gene count ``G``, so it sits on
+    the same scale as :class:`MyMSELoss` and a ``CompositeLoss`` weight keeps its meaning.
+
+    Parameters
+    ----------
+    scaling_type : {"relu", "sigmoid", "linear"}
+        How the raw cosine similarity maps to a non-negative affinity, mirroring
+        :class:`LaplacianRegularizerLoss`. ``relu`` keeps only positive similarities as edges.
+    temperature, threshold : float
+        Sigmoid parameters, used only when ``scaling_type="sigmoid"``.
+    gene_hyperbolic : bool
+        Use the Poincare similarity of :class:`WeightedContrastiveLoss` instead of cosine. Off by
+        default; the log-mapped embeddings this was tuned on use cosine.
+    eps : float
+        Denominator floor.
+    reduction : str | None
+        Present for API parity; the energy is already a scalar, so every value returns it as-is.
+
+    Notes
+    -----
+    ``gene_mask`` is accepted and ignored here: correct for single-panel runs (the common case,
+    where no mask is allocated). Multi-panel correctness -- restricting each pairwise distance to
+    the genes both sources measured -- is deferred, exactly as :class:`BatchDEAwareMSELoss` defers
+    its own ``gene_mask`` handling.
+    """
+
+    def __init__(
+        self,
+        scaling_type: Literal["relu", "sigmoid", "linear"] = "relu",
+        temperature: float = 1.0,
+        threshold: float = 0.0,
+        gene_hyperbolic: bool = False,
+        eps: float = 1e-8,
+        reduction: str | None = "mean",
+    ) -> None:
+        super().__init__()
+        self.scaling_type = scaling_type
+        self.temperature = temperature
+        self.threshold = threshold
+        self.gene_hyperbolic = gene_hyperbolic
+        self.eps = eps
+        self.reduction = reduction
+        # A parameter-free helper for the optional hyperbolic affinity; None on the cosine path.
+        self._hyp = WeightedContrastiveLoss(eps=eps) if gene_hyperbolic else None
+
+    def _affinity(self, gene_embeddings: torch.Tensor) -> torch.Tensor:
+        if self.gene_hyperbolic:
+            sim = self._hyp._pairwise_poincare_similarity(gene_embeddings)
+        else:
+            sim = WeightedContrastiveLoss.cosine_distance(
+                gene_embeddings, gene_embeddings
+            )
+
+        match self.scaling_type:
+            case "relu":
+                weight = sim.relu()
+            case "linear":
+                weight = (1.0 + sim) / 2.0
+            case "sigmoid":
+                weight = torch.sigmoid((sim - self.threshold) / self.temperature)
+            case _:
+                raise ValueError(f"Invalid scaling_type: {self.scaling_type!r}")
+
+        # A node is not its own neighbour: zero the diagonal.
+        return weight - torch.diag_embed(torch.diagonal(weight))
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        gene_embeddings: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        # float32 so the Gram matrix and edge sums keep precision under bf16-mixed.
+        y = y_pred.float()
+        weight = self._affinity(gene_embeddings).float()
+
+        gram = y @ y.T  # (B, B)
+        sq = torch.diagonal(gram)  # (B,) ||y_i||^2
+        deg = weight.sum(dim=1)  # (B,)
+
+        # sum_ij W_ij ||y_i - y_j||^2 via the B x B Gram, never forming a G x G matrix.
+        energy = 2.0 * (deg * sq).sum() - 2.0 * (weight * gram).sum()
+        # The identity can dip slightly below zero from float rounding.
+        energy = energy.clamp_min(0.0)
+
+        total_w = weight.sum().clamp_min(self.eps)
+        loss = energy / (total_w * y.shape[1])
+        return loss.to(y_pred.dtype)

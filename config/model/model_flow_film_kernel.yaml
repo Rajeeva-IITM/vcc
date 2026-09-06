@@ -1,0 +1,114 @@
+# `model_flow_film` with the perturbation MLP replaced by a KernelFiLM head.
+#
+# The ONLY change from model_flow_film.yaml is how the embedding becomes [gamma; beta]:
+#
+#   model_flow_film:  [gamma; beta] = MLP(e)               (3-layer ProcessingNN)
+#   this:             [gamma; beta] = softmax(cos(e, keys)/tau) @ values   (kernel regression)
+#
+# Why, and against what evidence. On the val panel (vcc2026-val-1) the FiLM-MLP model scored
+# overall -0.911 AFTER centering, with pds -0.007, fid -0.030, jac -0.002 -- i.e. at or below
+# the perturbation-blind baseline on every discrimination metric -- and nmae -5.557, pinned at
+# the floor even after the common shift was removed. Two failures at once:
+#   * DIRECTION collapses on held-out genes: the MLP has no smoothness prior, so an unseen
+#     embedding maps to an arbitrary response instead of interpolating from its neighbours.
+#   * MAGNITUDE blows up on held-out genes: the MLP extrapolates freely, so it emits a ~10x
+#     overshoot. Centering cannot fix this because the overshoot is perturbation-specific.
+#
+# KernelFiLM attacks both structurally (see the class docstring in flow_model.py):
+#   * out(e) is a softmax-weighted average of anchor responses -> SMOOTH in e -> a held-out
+#     gene near training genes interpolates their responses instead of collapsing.
+#   * out(e) is a CONVEX COMBINATION of the anchor `values` -> lives in their convex hull ->
+#     magnitude is bounded by real learned responses and cannot 10x-overshoot.
+# `tau` (learnable) is the collapse<->memorise dial; watch `*/kernel_entropy` in wandb
+# (~1 = collapsing to blind, ~0 = memorising).
+#
+# Everything else is held identical to model_flow_film.yaml so the conditioner is the only
+# variable: same branch widths (H=256, ko out = 2H = 512), same BatchDEAwareMSELoss, same
+# AdamW lr 1e-4 / CosineAnnealingWarmRestarts T_0=15.
+#
+# Run: pixi run python src/train.py model=model_flow_film_kernel data=dataset_multi \
+#          'trainer.devices=[1]'
+_target_: src.models.flow_lightning.VCCModule
+num_sampling_steps: 4
+
+net:
+  _target_: src.models.components.flow_model.FlowCellModel
+  # Frozen Poincare/GO lookup: `ko_vec` arrives as the precomputed 256-d vector and
+  # `gene_embedding` stays the default Identity.
+  time_embedding_dim: 128
+  time_embedding_scale: 1000.0
+  t_processor_args:
+    input_size: ${model.net.time_embedding_dim}
+    hidden_size: 256
+    num_hidden_layers: 2
+    # = H. Added to the modulated state, so must equal exp_processor.output_size.
+    output_size: 256
+    dropout: 0.0
+    activation: gelu
+  # The perturbation branch is now a kernel conditioner, not an MLP. output_size = 2H = 512
+  # = [gamma; beta]; FlowCellModel raises if this is not twice exp's output.
+  ko_conditioner:
+    _target_: src.models.components.flow_model.KernelFiLM
+    input_size: 256
+    output_size: 512
+    # K learned prototypes. A modelling choice, not the training-gene count. 256 gives room
+    # for many response modes while staying an interpolator, not a per-gene lookup.
+    num_anchors: 256
+    # Initial softmax bandwidth over cosine similarity (in [-1, 1]). Learnable from here.
+    temperature: 0.1
+    tau_min: 1e-2
+    learn_temperature: true
+  # Receives the interpolant x_t, NOT the control. Its output width H is the FiLM latent.
+  exp_processor_args:
+    input_size: 18080
+    hidden_size: 512
+    num_hidden_layers: 4
+    output_size: 256
+    dropout: 0.0
+    activation: relu
+  fusion_type: film
+  fused_processor_args:
+    # = H. The FiLM-modulated state is decoded straight to the per-gene velocity.
+    input_size: 256
+    hidden_size: 2048
+    num_hidden_layers: 4
+    output_size: ${model.net.exp_processor_args.input_size}
+    dropout: 0.0
+    activation: gelu
+    residual_connection: True
+    # MUST stay false -- this output is a velocity and a knockdown drives its target
+    # gene DOWN. See model_flow.yaml.
+    ensure_output_positive: False
+
+loss_fn:
+  _target_: src.models.components.loss_functions.common.CompositeLoss
+  loss_functions:
+    - _target_: src.models.components.loss_functions.velocity.BatchDEAwareMSELoss
+      # Sigmoid anchor, in control standard deviations.
+      threshold: 0.5
+      # Must match the spread of z (median 0.032, p95 0.238). The class default of 1.0
+      # is deliberately inert; do not inherit it here.
+      temperature: 0.05
+      # `sd` is exactly 0 for genes never detected in a control cell. At 1e-6 that
+      # saturates ~2.3% of entries to the top of the weight range. Raise to 1e-2 if the
+      # weight looks wrong.
+      eps: 1e-6
+      # Holds the loss on plain-MSE scale so `lr` keeps its meaning. Leave on, and leave
+      # the CompositeLoss weight at 1.
+      normalise: true
+      # `y_true` is a velocity here, so mu_p = y_true + control_exp.
+      velocity_target: true
+  weights:
+    - 1
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  # Held at the FiLM-MLP run's value so the conditioner is the only variable.
+  lr: 1e-4
+  weight_decay: 1e-5
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  _partial_: true
+  T_0: 15
