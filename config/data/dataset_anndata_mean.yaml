@@ -1,0 +1,41 @@
+# Same as `dataset_anndata`, but the target is the perturbation's MEAN profile rather
+# than an individual perturbed cell.
+#
+# Why: controls are paired at random, so a per-cell target carries the full cell-to-cell
+# variability of both cells. Measured on the 2025 data, knowing the perturbation explains
+# only 1.8% of that variance (velocity MSE 0.0545 vs a 0.0555 predict-nothing floor) --
+# the objective is 98% noise. Averaging the ~1,250 cells of each perturbation leaves the
+# signal alone and divides the noise by that factor, taking the signal fraction to ~96%.
+# The MSE optimum is unchanged (E[x1 | p] is the mean); the gradient variance is not.
+#
+# What it does to the prediction: every cell of a perturbation integrates to the same
+# profile, so within-perturbation variance in log space is zero. The pseudobulk is
+# identical either way, so the four DE metrics (nmae, fid, reach, jac -- 4/6 of the
+# score) are unaffected, and `mse` should improve because the mean is the MSE-optimal
+# per-cell prediction. To restore heterogeneity without retraining, add
+# `alpha * (x0 - mean(x0))` back at prediction time; the pseudobulk is invariant to it.
+#
+# Expect a different loss scale: the predict-nothing floor moves from 0.0555 to ~0.0287,
+# and the achievable loss on training perturbations is ~0 because `mu_p - x0` is fully
+# determined by the inputs. `val/loss` therefore measures embedding generalisation
+# rather than pairing noise -- and overfitting risk rises, so watch the train/val gap.
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    # All 300 perturbations, built by `python scripts/merge_2025.py`.
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+  gene_embedding_path: ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 128
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

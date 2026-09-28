@@ -8,11 +8,15 @@
 datamodule:
   _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
   data_path:
-    - ${paths.data_dir}/2025/train/adata_Training.h5ad
-    # Adding the other two 2025 splits raises coverage from 150 to 300
-    # perturbations, at ~3x the memory (~16 GB per file, held sparse).
-    # - ${paths.data_dir}/2025/validation/adata_Validation.h5ad
-    # - ${paths.data_dir}/2025/test/adata_Test.h5ad
+    # - ${paths.data_dir}/2025/train/adata_Training.h5ad
+    # For all 300 perturbations use the merged file built by
+    # `python scripts/merge_2025.py` -- 414,694 cells, 376,518 perturbed:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    #
+    # Do NOT simply list the three split files here. The 38,176 non-targeting
+    # cells are the *same cells* in all three, so concatenating them counts every
+    # control three times (27.6% of the dataset instead of 9.2%). The datamodule
+    # now rejects that rather than letting it pass silently.
   gene_embedding_path: ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
   pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
   # Set to a headerless CSV of gene names to permute the columns into that
@@ -22,7 +26,7 @@ datamodule:
   target_sum: 1e4
   log1p: true
   seed: ${seed}
-  num_workers: 8
+  num_workers: 4
   batch_size: 128
   test_size: 0.2
 

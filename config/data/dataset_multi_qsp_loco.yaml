@@ -1,0 +1,66 @@
+# Leave-one-context-out (LOCO) sweep base config. Same 7-source qsp mixture as
+# `dataset_multi_qsp_hepg2_valonly`, but the held-out context is chosen per run by
+# overriding `val_source`. `reference_val_only: true` holds the whole val_source context
+# out of training; `prior_val_fraction: 0.0` keeps its genes training on the other 6
+# (board's seen-elsewhere/unseen-here case). The held-out source's weight goes inert (no
+# train rows), so one config serves every context -- only `val_source` changes.
+#
+# Grouped sampler OFF: LOCO trains plain BatchDEAwareMSELoss (per-cell), which needs no
+# per-perturbation pseudobulk batching. Pair with `model_flow_film_kernel_linhead_qsp`.
+#
+# Run one context (via scripts/loco_sweep.sh, or by hand):
+#   pixi run python src/train.py model=model_flow_film_kernel_linhead_qsp \
+#     data=dataset_multi_qsp_loco data.datamodule.val_source=<SOURCE> \
+#     data.metadata.savename=loco/<SOURCE> trainer.max_epochs=25 'trainer.devices=[0]'
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/feng24_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/mcfaline23_gxe_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_hepg2_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/jiang24_preprocessed.h5ad
+  gene_embedding_path:
+    - ${paths.data_dir}/gene_embeddings/quantiles-train_expression.parquet
+    - ${paths.data_dir}/gene_embeddings/string_network_512.parquet
+    - ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  source_weights:
+    adata_2025_all: 0.12
+    replogle22_k562_preprocessed: 0.24
+    nadig24_jurkat_preprocessed: 0.08
+    feng24_preprocessed: 0.22
+    mcfaline23_gxe_preprocessed: 0.12
+    nadig24_hepg2_preprocessed: 0.14
+    jiang24_preprocessed: 0.08
+  # Overridden per run. reference_val_only holds this whole context out of training.
+  val_source: nadig24_hepg2_preprocessed
+  reference_val_only: true
+  prior_val_fraction: 0.0
+  # Context conditioning off by default (agnostic LOCO baseline). Override to true with the
+  # context model: data.datamodule.emit_context=true + model=...qsp_ctx.
+  emit_context: false
+  unobserved_fill: reference_mean
+  # PINNED: default epoch_size anchors to the val source's cell count x n_sources, so a
+  # large held-out context (replogle -> 12.5M/epoch) makes "25 epochs" 15x the compute of
+  # a small one (hepg2 -> 825k) and breaks cross-context comparability. Fix at ~1M so 25
+  # epochs means the same training for every held-out context, matching the compass runs.
+  epoch_size: 1000000
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024
+  test_size: 0.2
+  group_by_perturbation: false
+
+metadata:
+  groupname: VCC
+  # Overridden per run to loco/<SOURCE> so the sweep finds each checkpoint.
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

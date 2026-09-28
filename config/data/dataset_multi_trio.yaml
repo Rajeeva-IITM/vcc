@@ -1,0 +1,58 @@
+# `dataset_multi`, but the frozen `ko_vec` is the CONCATENATION of THREE gene embeddings:
+#   expr_quantiles (256) + STRING network (512) + GO-presence SVD (512)  -> 1280-d.
+#
+# Why these three
+# ---------------
+# A principled triad of complementary gene views, each the strongest of its family by
+# CKA-vs-response (pert-level, common-shift removed; 2026-09-08):
+#   * expr_quantiles (256)      CKA 0.108  -- EXPRESSION state; carries the response DIRECTION.
+#   * string_network_512 (512)  CKA 0.033  -- INTERACTION graph (STRING v12.0 PPI); best a-priori
+#                                             graph embedding, 2.3x Poincare.
+#   * go_presence_svd_512 (512) CKA 0.028  -- functional ONTOLOGY (GO presence, SVD-reduced).
+# Pairwise CKA: the two graph blocks share structure with each other (string~go_svd 0.39) but
+# both are near-ORTHOGONAL to the expression block (string~quant 0.044, go_svd~quant 0.039), so
+# expression carries the direction while the graph blocks add ~independent functional structure.
+#
+# Fair combination: `_load_embeddings` L2-normalises EACH block per row before concatenating, so
+# the three blocks contribute equally to the KernelFiLM cosine regardless of raw norm. Rows align
+# on the FIRST path (quantiles, 18,080 genes); a gene a source lacks is zero-filled for that block
+# (STRING covers 17,183/18,080 = 95%; quantiles + go_svd cover all 18,080).
+#
+# Frozen only (a `ko_vec` config). Pair with `model_flow_film_kernel_linhead_trio`
+# (ko_conditioner.input_size = 1280), or its `_contrastive` variant.
+#
+# Run: pixi run python src/train.py model=model_flow_film_kernel_linhead_trio \
+#          data=dataset_multi_trio 'trainer.devices=[1]'
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+  # A list -> per-block L2-normalise and concatenate. Quantiles FIRST fixes the row order.
+  gene_embedding_path:
+    - ${paths.data_dir}/gene_embeddings/quantiles-train_expression.parquet
+    - ${paths.data_dir}/gene_embeddings/string_network_512.parquet
+    - ${paths.data_dir}/gene_embeddings/go_presence_svd_512.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  source_weights:
+    adata_2025_all: 0.63
+    replogle22_k562_preprocessed: 0.30
+    nadig24_jurkat_preprocessed: 0.07
+  val_source: adata_2025_all
+  unobserved_fill: reference_mean
+  epoch_size: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

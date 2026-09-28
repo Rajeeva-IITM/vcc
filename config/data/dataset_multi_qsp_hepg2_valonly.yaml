@@ -1,0 +1,88 @@
+# `dataset_multi_qsp_hepg2_grouped`, but with HepG2 held out of training ENTIRELY --
+# a fully-unseen cross-context validation. Pair with `model_flow_film_kernel_linhead_qsp_magcal`.
+#
+# Why this exists (the honest-compass fix)
+# ----------------------------------------
+# score_local scored the grouped checkpoint +0.378 fid on held-out HepG2 perturbations
+# but the board sat at blind (fid -0.020) -- because HepG2 was IN the training mixture
+# (weight 0.14). Its "held-out" perturbations were new genes in a context the model had
+# already seen, so the score rewarded within-context generalization the board never
+# tests. The board's failure is UNSEEN-CONTEXT transfer, and with all 7 sources trained
+# there was no unseen context left to measure it offline -- the board was the only honest
+# test, and every local number was rosy (2025-local and HepG2-local both overstated fid).
+#
+# The fix is to SACRIFICE a context. HepG2 is held out of training completely
+# (reference_val_only: true): none of its rows ever train, so validation on it is a
+# genuine unseen-context test -- the same question the board asks. If HepG2-local fid
+# finally drops toward blind here, matching the board, we have an offline compass and can
+# iterate without submitting. If it stays high, unseen-context direction transfer is real
+# and the board gap is something else.
+#
+# What reference_val_only + prior_val_fraction: 0.0 gives
+# -------------------------------------------------------
+#   * Every HepG2 perturbation becomes a held-out gene -> no HepG2 training gradient.
+#   * prior_val_fraction 0.0 keeps those genes training on the OTHER 6 sources, so this
+#     reproduces the board's dominant case (272/300): perturbation seen elsewhere, does it
+#     transfer to a context never seen? (Set 1.0 instead for the harder 28/300 case, where
+#     the gene's embedding row never trains anywhere.)
+#   * HepG2 still contributes its controls, its pooled reference-mean fill for unmeasured
+#     genes, and the entire validation set -- it just adds no training rows.
+#
+# Sources (7): identical files to the grouped config; HepG2 dropped from source_weights
+# (it trains nothing, so a weight would be dead). The freed 0.14 is redistributed across
+# the remaining six, keeping the perturbation + context diversity intent.
+#
+# Frozen embedding: quant+STRING+Poincare (1024-d), identical to the grouped config.
+# GROUPED batches kept (32x32) so the magcal magnitude term still trains. Run:
+#   pixi run python src/train.py model=model_flow_film_kernel_linhead_qsp_magcal \
+#          data=dataset_multi_qsp_hepg2_valonly 'trainer.devices=[0]'
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/feng24_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/mcfaline23_gxe_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_hepg2_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/jiang24_preprocessed.h5ad
+  # A list -> per-block L2-normalise and concatenate. Quantiles FIRST fixes the row order.
+  gene_embedding_path:
+    - ${paths.data_dir}/gene_embeddings/quantiles-train_expression.parquet
+    - ${paths.data_dir}/gene_embeddings/string_network_512.parquet
+    - ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  # HepG2 (nadig24_hepg2) is deliberately absent: it trains nothing under
+  # reference_val_only, so a weight here would be dead. Freed 0.14 spread over the six.
+  source_weights:
+    adata_2025_all: 0.14
+    replogle22_k562_preprocessed: 0.28
+    nadig24_jurkat_preprocessed: 0.09
+    feng24_preprocessed: 0.26
+    mcfaline23_gxe_preprocessed: 0.14
+    jiang24_preprocessed: 0.09
+  val_source: nadig24_hepg2_preprocessed
+  # Hold the WHOLE HepG2 context out of training (fully-unseen cross-context validation),
+  # and keep its genes training on the other six sources (board's 272/300 case).
+  reference_val_only: true
+  prior_val_fraction: 0.0
+  unobserved_fill: reference_mean
+  epoch_size: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024  # ignored under group_by_perturbation (batch = perts x cells)
+  # Grouped training batches so the pseudobulk-per-perturbation losses train. HepG2 is
+  # not among the training groups (it contributes no train rows); val is unaffected.
+  group_by_perturbation: true
+  perts_per_batch: 32
+  cells_per_pert: 32
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

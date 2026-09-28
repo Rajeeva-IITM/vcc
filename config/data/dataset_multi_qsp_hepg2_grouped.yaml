@@ -1,0 +1,96 @@
+# `dataset_multi_qsp`, but with the FULL PrimeFlow multi-context mixture and a
+# cross-context validation source. Pair with `model_flow_film_kernel_linhead_qsp`
+# (the qsp/proj_dim model is unchanged -- this is a data-only change).
+#
+# Why this exists (the mean-collapse fix)
+# ---------------------------------------
+# score_local (2026-09-11) showed the qsp checkpoint scores +0.125 / fid +0.355 on
+# 2025 held-out perts but -0.021 / fid -0.062 on the 2026 board -- and its DE-cosine
+# (0.10) sits BELOW the blind bar (0.20). The model was echoing the 2025 POPULATION
+# MEAN, not reading perturbation identity, because 63% of the mixture was 2025 and only
+# ~3 contexts were present. The fix is more CONTEXTS and more PERTURBATIONS, with 2025
+# demoted: seeing liver / glioma / immune / multi-line responses, the model can no
+# longer explain the data with one mean profile -- it must use the perturbation.
+#
+# Sources (7) and why the weights
+# -------------------------------
+# Weighted toward perturbation + context DIVERSITY, 2025 demoted from 0.63 to 0.12.
+#   replogle22_k562        0.24  9.9k perts, K562 (the diversity workhorse)
+#   feng24                 0.22  6.7k perts, MULTIPLE cell lines + donors (98% panel)
+#   nadig24_hepg2 (VAL)    0.14  2.2k perts, HepG2 liver -- the val context (see below)
+#   mcfaline23_gxe         0.12  gene x environment, a172 glioma (98% panel)
+#   nadig24_jurkat         0.08  2.3k perts, Jurkat T-cell
+#   jiang24                0.08  219 perts but multiple immune cell types (91% panel)
+#   adata_2025_all         0.12  the challenge-lineage context; kept, not dominant
+# All auto-reconcile: source_cache detects pert_key/control_label/delog per file
+# (verified 2026-09-11) -- no per-source overrides. Adding low-overlap sources SHRINKS
+# the shared depth axis (was 6,691 with 3 sources); that is expected and is a rebuild,
+# not a bug. The prediction panel stays the full 18,080; genes a source lacks are
+# masked in the loss (observed=False) and filled with the reference mean as input.
+#
+# Validation: HepG2, cross-context (option 1, no code change)
+# -----------------------------------------------------------
+# val_source = nadig24_hepg2_preprocessed. The datamodule validates on HepG2's HELD-OUT
+# perturbations (a held-out-gene split), while HepG2's other perts + controls still
+# train -- so the liver context is PARTLY seen, not fully unseen. This is exactly the
+# 272/300 leaderboard situation (perturbation seen elsewhere, does it transfer to this
+# context?) and is a real transfer signal -- unlike val on 2025, which rewarded the
+# mean-alignment that fails on the board. A fully-unseen HepG2 would need a val-only
+# source (a datamodule change) -- deferred by choice.
+#
+# Frozen embedding: quant+STRING+Poincare (1024-d), identical to dataset_multi_qsp.
+#
+# GROUPED-BATCH variant (see the group_by_perturbation block below): pair with the magcal
+# model so the magnitude term trains. Run:
+#   pixi run python src/train.py model=model_flow_film_kernel_linhead_qsp_magcal \
+#          data=dataset_multi_qsp_hepg2_grouped 'trainer.devices=[0]'
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/feng24_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/mcfaline23_gxe_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_hepg2_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/jiang24_preprocessed.h5ad
+  # A list -> per-block L2-normalise and concatenate. Quantiles FIRST fixes the row order.
+  gene_embedding_path:
+    - ${paths.data_dir}/gene_embeddings/quantiles-train_expression.parquet
+    - ${paths.data_dir}/gene_embeddings/string_network_512.parquet
+    - ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  source_weights:
+    adata_2025_all: 0.12
+    replogle22_k562_preprocessed: 0.24
+    nadig24_jurkat_preprocessed: 0.08
+    feng24_preprocessed: 0.22
+    mcfaline23_gxe_preprocessed: 0.12
+    nadig24_hepg2_preprocessed: 0.14
+    jiang24_preprocessed: 0.08
+  val_source: nadig24_hepg2_preprocessed
+  unobserved_fill: reference_mean
+  epoch_size: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024  # ignored under group_by_perturbation (batch = perts x cells)
+  test_size: 0.2
+  # Grouped training batches so the pseudobulk-per-perturbation losses (magnitude term)
+  # actually train: each batch is perts_per_batch perturbations x cells_per_pert of their
+  # cells (different control pairings, same target mean), giving clean per-perturbation
+  # pseudobulks. Without this, ~19k perturbations over a 1024 cell-shuffled batch means
+  # ~1 cell/pert and the pseudobulk term is inert. 32x32 = 1024/batch. Val is unaffected
+  # (already perturbation-ordered).
+  group_by_perturbation: true
+  perts_per_batch: 32
+  cells_per_pert: 32
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

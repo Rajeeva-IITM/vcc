@@ -1,0 +1,108 @@
+# `dataset_anndata_mean`, but trained on several perturbation datasets at once.
+#
+# Why
+# ---
+# 275 of the 300 2026 targets were never perturbed in 2025. The binding constraint is
+# perturbation diversity, not model capacity or loss design -- reweighting the loss was
+# measured to move the DE gradient share only 77.3% -> 80.3%, so the objective is not
+# where the deficit is. These two public Perturb-seq datasets add ~11,000 perturbations
+# against 2025's 300, and a retrieval test put Replogle's signatures at 46.6% top-1
+# against the matched 2025 signatures (chance 0.36%, median rank 2 of 279), essentially
+# unchanged by centering -- so the agreement is target-specific, not a shared stress
+# response.
+#
+# What the datamodule reconciles for you
+# --------------------------------------
+# The three files disagree on the gene panel (18,080 / 8,247 / 8,880), on the obs column
+# naming the perturbation (`target_gene` / `perturbation`), on the control label
+# (`non-targeting` / `control`), and on what the values mean -- 2025 is raw counts while
+# both PrimeFlow files are already log1p(cp9715). All of that is auto-detected; see
+# `src/data/source_cache.py`. Adding a dataset is adding a line to `data_path`.
+#
+# Two things follow from the panels differing, and both are automatic:
+#   * Depth is normalised over the genes common to every source (6,691 for these three),
+#     not each source's own panel. Otherwise a gene reads ~1.4x higher in K562, whose
+#     7,456 genes would have to carry the whole target_sum between them.
+#   * Genes a source did not measure are masked out of the loss and filled in the input
+#     with the reference source's control profile. See `flow_lightning._apply_mask`.
+#
+# Equal SAMPLE shares are not equal GRADIENT shares
+# -------------------------------------------------
+# Measured at initialisation, a source's per-sample loss is its MSE on measured genes
+# times its coverage, so with `source_weights: null` the shares came out:
+#
+#   adata_2025_all 15.0% | replogle 41.9% | nadig 43.1%      (plain MSE)
+#   adata_2025_all 22.3% | replogle 36.8% | nadig 40.9%      (BatchDEAwareMSELoss)
+#
+# An auxiliary sample's velocity target is ~2.7x larger after masking -- almost entirely
+# because its control cell sits further from its own population mean, not because it
+# carries more perturbation signal (1.13% of Replogle's target energy is perturbation
+# specific, against 3.42% of 2025's). So equal thirds hand 85% of the gradient to two
+# cell lines that are FURTHER from the 2026 test contexts than 2025 is:
+#
+#   pooled control-profile correlation on the 6,691 shared genes, vs context A / B / C
+#     adata_2025_all   0.554 / 0.661 / 0.685
+#     replogle22_k562  0.428 / 0.342 / 0.367
+#     nadig24_jurkat   0.569 / 0.347 / 0.360
+#
+# The 2026-09-01 12-29-14 run used equal thirds and halved the fraction of the
+# control-to-mean gap explained on held-out 2025 genes, 28.5% -> 15.7%.
+#
+# Cost
+# ----
+# First run builds one cache per source: ~2 min for Nadig, ~7 min for 2025, ~15 min for
+# Replogle. Later runs load them in seconds. The caches hold per-perturbation means and
+# controls only -- perturbation_mean targets never read an individual perturbed cell --
+# which is what makes the 71 GB Replogle file trainable at ~3 GB resident.
+#
+# Note the checkpoints are NOT interchangeable with single-dataset runs: the 6,691-gene
+# depth axis shifts every input value relative to the 18,080-gene one. `norm_axis.csv` is
+# written beside the checkpoints and `scripts/predict_2026.py` picks it up automatically.
+#
+# Run: pixi run python src/train.py model=model_flow_abundance data=dataset_multi
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    # All 300 perturbations, built by `python scripts/merge_2025.py`.
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    # 9,210 perturbations with an embedding, K562, CRISPRi. Same cell line as 2025.
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    # 1,958 with an embedding, Jurkat. A different cell line, and it covers 0 of the 300
+    # 2026 targets -- it is here as diversity, not as coverage. Delete this line to drop it.
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+  gene_embedding_path: ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  # Pins the model's output panel to the 18,080 genes predict_2026.py expects. Required
+  # here: without it the panel would be whichever file happens to be listed first.
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  # Draw shares chosen so the LOSS splits 50/40/10, not so the sample count splits evenly
+  # -- see the header. Solved against the measured per-sample losses under
+  # BatchDEAwareMSELoss and verified on a batch drawn at these weights: 49.5% / 40.0% /
+  # 10.5%. Re-solve if the loss or the source list changes; the numbers are specific to
+  # both. `null` restores equal thirds, which is what 12-29-14 ran.
+  #
+  # Replogle is held at 4x Nadig rather than dropped: it covers 272 of the 300 2026
+  # targets against Nadig's 0, and a measured K562 delta still agrees with the matched
+  # 2025 delta at cosine +0.119 once the common shift is projected out of both.
+  source_weights:
+    adata_2025_all: 0.63
+    replogle22_k562_preprocessed: 0.30
+    nadig24_jurkat_preprocessed: 0.07
+  # Held-out genes leave every source's training set, but val/* is scored here alone, so
+  # the numbers stay comparable to single-dataset runs.
+  val_source: adata_2025_all
+  unobserved_fill: reference_mean
+  epoch_size: null              # null => reference source's cells x number of sources
+  control_label: non-targeting  # fallback only; each source auto-detects its own
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

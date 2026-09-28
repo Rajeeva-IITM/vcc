@@ -63,6 +63,41 @@ def build_embedding_dict(data: pl.DataFrame) -> dict[str, np.ndarray]:
     return result
 
 
+def build_gene_maps(
+    genes_src: list[str], genes_dst: list[str]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map a destination gene panel onto a source panel, **by name**.
+
+    Two panels of the same genes are not interchangeable: the 2025 and 2026 panels
+    share 18,077 genes in a different relative order, so anything positional is
+    silently wrong. Everywhere this repo crosses panels -- reading a foreign
+    ``.h5ad`` into the model's gene order, or scattering a prediction back to the
+    2026 order -- goes through this function.
+
+    Args:
+        genes_src (list[str]): The panel being read *from*.
+        genes_dst (list[str]): The panel being read *into*; the output order.
+
+    Returns:
+        tuple: ``(dst_to_src, present, unmapped_src)``. ``dst_to_src[i]`` is the
+        source column for destination gene *i* (0 where absent, so it must always
+        be masked by ``present``), and ``unmapped_src`` lists the source columns no
+        destination gene covers.
+    """
+    pos = {gene: i for i, gene in enumerate(genes_src)}
+    dst_to_src = np.zeros(len(genes_dst), dtype=np.int64)
+    present = np.zeros(len(genes_dst), dtype=bool)
+    for i, gene in enumerate(genes_dst):
+        j = pos.get(gene)
+        if j is not None:
+            dst_to_src[i], present[i] = j, True
+
+    covered = np.zeros(len(genes_src), dtype=bool)
+    covered[dst_to_src[present]] = True
+
+    return dst_to_src, present, np.flatnonzero(~covered)
+
+
 if __name__ == "__main__":
     data = read_data("../../../vcc_data/gene_embeddings/PCA-train_expression.parquet")
     result = build_embedding_dict(data)

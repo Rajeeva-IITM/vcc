@@ -1,0 +1,57 @@
+# `dataset_multi`, but the perturbation embedding is the CONCATENATION of two sources:
+# Poincare-GO (256-d) and ESM2 protein features (5120-d) -> 5376-d frozen `ko_vec`.
+#
+# Why
+# ---
+# Poincare-GO similarity is nearly uncorrelated with true response similarity (measured
+# corr ~0.03 on velocities), and ESM2 alone transfers at ~random (kNN specific 0.03-0.05).
+# This tests whether the two together carry complementary information a single source does
+# not -- functional-graph proximity (Poincare) plus protein-sequence identity (ESM2).
+#
+# Fair combination
+# ----------------
+# `_load_embeddings` L2-normalises EACH block per row before concatenating, so the 5120-d
+# ESM2 block does not swamp the 256-d Poincare block in the KernelFiLM cosine (raw norms
+# 7.3 vs 3.6, and 20x the dims). Both blocks then contribute equally and the learned
+# anchors decide the weighting. Rows align on the FIRST path (Poincare, 18,080 genes); the
+# 190 genes ESM2 lacks are zero-filled for that block (ESM2's own "no signal" token).
+#
+# Frozen only: this is a `ko_vec` (frozen-lookup) config. To make the concatenation
+# trainable you would need a `LearnableGeneEmbedding` of width 5376, which is a separate
+# experiment. Pair with `model_flow_film_kernel_linhead_combo` (ko_conditioner.input_size
+# = 5376).
+#
+# Run: pixi run python src/train.py model=model_flow_film_kernel_linhead_combo \
+#          data=dataset_multi_combo 'trainer.devices=[1]'
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+  # A list -> per-block L2-normalise and concatenate. Poincare FIRST fixes the row order.
+  gene_embedding_path:
+    - ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+    - ${paths.data_dir}/gene_embeddings/ESM2_pert_features_gene_named.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  source_weights:
+    adata_2025_all: 0.63
+    replogle22_k562_preprocessed: 0.30
+    nadig24_jurkat_preprocessed: 0.07
+  val_source: adata_2025_all
+  unobserved_fill: reference_mean
+  epoch_size: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

@@ -1,0 +1,53 @@
+# `dataset_multi`, but the frozen `ko_vec` is the CONCATENATION of the expression-quantile
+# embedding (256-d) and the Poincare-GO embedding (256-d) -> 512-d.
+#
+# Why these two
+# -------------
+# CKA vs the true response (2026-09-08): expr_quantiles 0.108, poincare 0.014, and the two
+# are near-ORTHOGONAL to each other (CKA 0.012). So they are complementary: quantiles carry
+# almost all the response-aligned signal, Poincare adds functional-graph structure that is
+# nearly independent of it. Concatenating gives the model both and lets KernelFiLM's learned
+# anchors weight them.
+#
+# Fair combination: `_load_embeddings` L2-normalises EACH block per row before concatenating,
+# so the two 256-d blocks contribute equally to the KernelFiLM cosine (raw norms differ:
+# quantiles are non-negative 0-7.8, Poincare ~3.6). Rows align on the FIRST path (quantiles,
+# 18,080 genes); a gene the other source lacks is zero-filled for that block.
+#
+# Frozen only (a `ko_vec` config). Pair with `model_flow_film_kernel_linhead_quantpoi`
+# (ko_conditioner.input_size = 512).
+#
+# Run: pixi run python src/train.py model=model_flow_film_kernel_linhead_quantpoi \
+#          data=dataset_multi_quant_poincare 'trainer.devices=[1]'
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+  # A list -> per-block L2-normalise and concatenate. Quantiles FIRST fixes the row order.
+  gene_embedding_path:
+    - ${paths.data_dir}/gene_embeddings/quantiles-train_expression.parquet
+    - ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  source_weights:
+    adata_2025_all: 0.63
+    replogle22_k562_preprocessed: 0.30
+    nadig24_jurkat_preprocessed: 0.07
+  val_source: adata_2025_all
+  unobserved_fill: reference_mean
+  epoch_size: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}

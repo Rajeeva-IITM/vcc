@@ -1,0 +1,70 @@
+# `dataset_multi`, tuned for a model that LEARNS its perturbation embedding.
+#
+# Two changes from dataset_multi, both because the auxiliary data is now being used for a
+# different purpose. Under a frozen embedding it supplied extra expression targets, and
+# the 2026-09-01 12-29-14 run showed that hurt (DE correlation 0.392 -> 0.314). Under a
+# learned table it supplies something the frozen one could not use at all: gradient for
+# 9,233 of the 18,080 embedding rows, covering 272 of the 300 2026 targets.
+#
+# 1. `source_weights` -- 2025 is no longer an equal third
+# ------------------------------------------------------
+# Equal thirds is what degraded 12-29-14, and its val/loss bottomed at epoch 2-3 then rose
+# monotonically for the remaining 97. 0.45/0.45/0.10 keeps 2025 and Replogle level -- the
+# table needs Replogle's gradient on those 9,210 rows -- while cutting Jurkat to a tenth.
+#
+# Jurkat earns that tenth and no more: it adds exactly 2 perturbations to the union
+# (9,233 vs Replogle's 9,210), covers 0/300 2026 targets, and is a different cell line.
+# What it does contribute is a second cell line's view of perturbations Replogle already
+# has, which is a regulariser against the table memorising K562-specific response.
+#
+# 2. `prior_val_fraction` -- validation now measures two different things
+# ----------------------------------------------------------------------
+# A held-out gene whose row still trains on Replogle reproduces the leaderboard position
+# of 272/300 targets. A gene withheld from every source reproduces the other 28, whose
+# rows never move. 0.25 splits the 60 held-out genes 45/15:
+#
+#   val/*        45 genes, rows trained by the aux data  -> monitors the checkpoint
+#   val_prior/*  15 genes, rows never trained            -> did learning wreck the prior?
+#
+# Neither is the 60-gene number earlier runs reported, so the direction metric here
+# (`val/diff_exp_agg`) is not directly comparable to 22-35-18's 0.511 (which was the
+# since-removed per-cell `val/sample_diff_exp`). Score that checkpoint on the same 45 genes
+# if you need the comparison.
+#
+# Everything else -- the derived 6,691-gene depth axis, the caches, the loss masking -- is
+# inherited from dataset_multi unchanged.
+#
+# Run: pixi run python src/train.py model=model_flow_learned_embedding data=dataset_multi_embed
+datamodule:
+  _target_: src.data.vcc_anndata_module.AnnDataVCCDataModule
+  data_path:
+    - ${paths.data_dir}/2025/adata_2025_all.h5ad
+    - ${paths.data_dir}/primeflow_data/replogle22_k562_preprocessed.h5ad
+    - ${paths.data_dir}/primeflow_data/nadig24_jurkat_preprocessed.h5ad
+  gene_embedding_path: ${paths.data_dir}/gene_embeddings/poincare_go_gaf_logmapped_256.parquet
+  pert_counts_path: ${paths.data_dir}/2025/validation/pert_counts_Validation.csv
+  # Pins the output panel to the 18,080 genes predict_2026.py expects. This is also the
+  # row space of `ko_id` and of the embedding table, which are the same 18,080 rows of
+  # the parquet above -- so an id means the same gene in both.
+  gene_list_path: ${paths.data_dir}/2025/gene_names.csv
+  cache_dir: ${paths.data_dir}/_cache
+  source_weights:
+    adata_2025_all: 0.45
+    replogle22_k562_preprocessed: 0.45
+    nadig24_jurkat_preprocessed: 0.10
+  val_source: adata_2025_all
+  prior_val_fraction: 0.25
+  unobserved_fill: reference_mean
+  epoch_size: null
+  control_label: non-targeting
+  target_sum: 1e4
+  log1p: true
+  target_mode: perturbation_mean
+  seed: ${seed}
+  num_workers: 4
+  batch_size: 1024
+  test_size: 0.2
+
+metadata:
+  groupname: VCC
+  savename: ${data.metadata.groupname}_${now:%d_%m_%Y}/${now:%H-%M-%S}
