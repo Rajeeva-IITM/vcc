@@ -124,13 +124,37 @@ class VCCModule(LightningModule):
         gate = getattr(getattr(self.net, "decoder", None), "last_gate", None)
         if gate is not None and gate.numel() == 0:
             gate = None
+
+        # Zero both sides on genes the sample's source did not measure, and hand the mask to
+        # the loss -- exactly as flow_lightning does. Since d/dv (m*v - m*u)^2 = 2 m^2 (v-u)
+        # vanishes where m == 0, masked genes contribute no gradient. `gene_mask` is present
+        # only on multi-panel runs (dataset_multi); single-panel runs leave it None, so this
+        # is a no-op and existing direct configs are unchanged.
+        mask = X.get("gene_mask")
+        y_pred_l, y_l = y_pred, y
+        if mask is not None:
+            m = mask.to(y_pred.dtype)
+            y_pred_l, y_l = y_pred * m, y * m
         loss: torch.Tensor = self.criterion(
-            y_pred,
-            y,
+            y_pred_l,
+            y_l,
             control_exp=X["exp_vec"],
             gene_embeddings=X["ko_vec"],
+            gene_mask=mask,
             gate=gate,
         )  # For some losses
+
+        # A CompositeLoss stashes its per-term (unweighted) values on the last forward;
+        # surface each so wandb shows how the terms balance (e.g. contrastive vs the DE-aware
+        # MSE). prog_bar off to avoid clutter; a plain loss has no stash -> no-op.
+        components = getattr(self.criterion, "last_components", None)
+        if components:
+            self.log_dict(
+                {step.format(f"loss_{k}"): v for k, v in components.items()},
+                prog_bar=False,
+                logger=True,
+                on_epoch=True,
+            )
 
         return {
             step.format("loss"): loss,
@@ -141,13 +165,28 @@ class VCCModule(LightningModule):
         batch: tuple[dict[str, torch.Tensor], torch.Tensor],
         y_pred: torch.Tensor,
         step: Literal["train/{}", "val/{}", "test/{}"],
+        light: bool = False,
     ):
         X, y = batch
 
         mae = self.mae(y_pred, y)
         mse = self.mse(y_pred, y)
-        jaccard_loss = self.jaccard_loss.forward(y_pred, y, X["exp_vec"], X["ko_vec"])
         cosine = torchmetrics.functional.cosine_similarity(y_pred, y, reduction="mean")
+
+        # The remaining metrics are expensive and are recomputed every call:
+        # `spearman_corrcoef` ranks all ~18k genes per cell, `WeightedContrastiveLoss` is
+        # O(batch^2) over the full gene width, and DiffExp/Jaccard/BatchVariance add more.
+        # On the training step that per-step cost dominates wall-clock (the model itself can
+        # be a single matmul), so `light=True` keeps only the cheap trio there and defers the
+        # full suite to validation/test -- the same split flow_lightning uses.
+        if light:
+            return {
+                step.format("mae"): mae,
+                step.format("mse"): mse,
+                step.format("cosine"): cosine,
+            }
+
+        jaccard_loss = self.jaccard_loss.forward(y_pred, y, X["exp_vec"], X["ko_vec"])
 
         corr = torchmetrics.functional.spearman_corrcoef(
             y_pred.T, y.T
@@ -185,7 +224,7 @@ class VCCModule(LightningModule):
         X, y = batch
         y_pred = self.forward(X)
         losses = self._calculate_losses(batch, y_pred, "train/{}")
-        metrics = self._calculate_metrics(batch, y_pred, "train/{}")
+        metrics = self._calculate_metrics(batch, y_pred, "train/{}", light=True)
         self.log_dict(losses, prog_bar=True, logger=True, on_epoch=True)
         self.log_dict(metrics, prog_bar=True, logger=True, on_epoch=True)
 

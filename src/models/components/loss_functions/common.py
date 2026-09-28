@@ -232,6 +232,7 @@ class WeightedContrastiveLoss(nn.Module):
         eps: float = 1e-7,
         gene_hyperbolic=False,
         hyperbolic_similarity_scale=1,
+        teacher: str = "gene",
     ):
         super(WeightedContrastiveLoss, self).__init__()
         self.temperature = temperature
@@ -239,6 +240,26 @@ class WeightedContrastiveLoss(nn.Module):
         self.eps = eps
         self.gene_hyperbolic = gene_hyperbolic
         self.hyperbolic_scale = hyperbolic_similarity_scale
+        # Which pairwise-similarity TEACHER drives the pull/push weights:
+        #   "gene"          -- cosine of `gene_embeddings` (the frozen `ko_vec`). Back-compat
+        #                      default. On the trio concat this sits in a positive cone
+        #                      (mean cosine ~0.26, <1% negative pairs) so the push term almost
+        #                      never fires and the loss collapses to ~1e-4 -- see `teacher`
+        #                      below for why that is inert.
+        #   "gene_centered" -- the same cosine minus its batch-mean, so ~half the pairs become
+        #                      negative (push). Makes the embedding teacher fire, but it still
+        #                      supervises toward embedding geometry (CKA ~0.11 with response).
+        #   "response"      -- cosine of the batch-centered TRUE DELTA `y_true = u = x1 - x0`.
+        #                      Removing the batch mean strips the common shift (which dominates
+        #                      ~7x and would recreate the positive cone), leaving the
+        #                      perturbation-SPECIFIC direction -- the same quantity `specific_cos`
+        #                      scores, and the response geometry itself. The student is centered
+        #                      the same way so both live in the specific-direction space.
+        if teacher not in ("gene", "gene_centered", "response"):
+            raise ValueError(
+                f"teacher must be 'gene', 'gene_centered' or 'response', got {teacher!r}"
+            )
+        self.teacher = teacher
 
     @staticmethod
     def cosine_distance(u: torch.Tensor, v: torch.Tensor):
@@ -291,12 +312,14 @@ class WeightedContrastiveLoss(nn.Module):
         **kwargs,
     ):
         """
-        Calculate the Contrastive Loss weighted based on genetic similarity
+        Calculate the Contrastive Loss weighted by a pairwise-similarity teacher.
 
         Args:
-            y_pred (Tensor): predicted expression
-            y_true (Tensor): not used
-            gene_embeddings (Tensor): Emebeddings representing genes
+            y_pred (Tensor): predicted delta/velocity (the student).
+            y_true (Tensor): true delta ``u = x1 - x0``. Used only when
+                ``teacher == "response"``; ignored otherwise.
+            gene_embeddings (Tensor): per-sample embedding (the frozen ``ko_vec``). Used by
+                the ``"gene"`` / ``"gene_centered"`` teachers; ignored for ``"response"``.
             args, kwargs can be ignored and are present only for consistency
 
         Returns:
@@ -307,21 +330,38 @@ class WeightedContrastiveLoss(nn.Module):
 
         # float32 so the cosine/exp/log chain keeps precision under bf16-mixed.
         y_pred = y_pred.float()
-        gene_embeddings = gene_embeddings.float()
 
-        # Calculate cosine distances
-
+        # Student similarity. For the response teacher, compare the SPECIFIC directions of
+        # the predictions (remove the batch common shift) so the student lives in the same
+        # space as the centered-delta teacher; otherwise use the raw predicted profile.
+        pred = (
+            y_pred - y_pred.mean(dim=0, keepdim=True)
+            if self.teacher == "response"
+            else y_pred
+        )
         pred_sim_mat = (
-            self.cosine_distance(y_pred, y_pred) / self.temperature
+            self.cosine_distance(pred, pred) / self.temperature
         )  # Temperature to scale the distances
-        if not self.gene_hyperbolic:
-            gene_sim_mat = self.cosine_distance(gene_embeddings, gene_embeddings)
+
+        # Teacher similarity -> the pull/push weights.
+        if self.teacher == "response":
+            # Batch-center the true delta to strip the common shift, then cosine: the
+            # perturbation-specific response geometry, with genuine negatives.
+            tgt = y_true.float() - y_true.float().mean(dim=0, keepdim=True)
+            gene_sim_mat = self.cosine_distance(tgt, tgt)
         elif self.gene_hyperbolic:
-            gene_sim_mat = self._pairwise_poincare_similarity(gene_embeddings)
+            gene_sim_mat = self._pairwise_poincare_similarity(gene_embeddings.float())
         else:
-            raise ValueError(
-                "Invalid value for gene_hyperbolic. Must be boolean. You are idiot"
+            gene_sim_mat = self.cosine_distance(
+                gene_embeddings.float(), gene_embeddings.float()
             )
+            if self.teacher == "gene_centered":
+                # A positive-cone embedding has almost no negative pairs; subtract the
+                # off-diagonal mean so ~half the pairs push and the loss is informative.
+                off = gene_sim_mat[
+                    ~torch.eye(batch_size, dtype=torch.bool, device=device)
+                ]
+                gene_sim_mat = gene_sim_mat - off.mean()
 
         # Removing diagonal
 

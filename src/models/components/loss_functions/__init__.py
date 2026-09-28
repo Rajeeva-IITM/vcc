@@ -34,6 +34,7 @@ from .expression import (
 )
 from .velocity import (
     BatchDEAwareMSELoss,
+    BatchDeltaMagnitudeLoss,
     BatchDiffExpError,
     DEWeightedMSELoss,
 )
@@ -41,6 +42,7 @@ from .velocity import (
 __all__ = [
     "AdjacencySimilarityLoss",
     "BatchDEAwareMSELoss",
+    "BatchDeltaMagnitudeLoss",
     "BatchDiffExpError",
     "BatchLaplacianReg",
     "BatchVariance",

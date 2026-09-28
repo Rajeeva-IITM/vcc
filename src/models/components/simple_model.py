@@ -4,6 +4,58 @@ from torch import nn
 from src.models.components.basic_vcc_model import ProcessingNN
 
 
+class CellModelKernelDelta(nn.Module):
+    """Direct pure-shift model: ``y = relu(x_0 + Delta(ko))``.
+
+    The non-flow counterpart to ``flow_model.FlowCellModel``. Instead of regressing a velocity
+    and integrating it, it predicts the per-perturbation delta in one shot and adds it to the
+    control. This is the ``CellModelSimple`` idea (``x_0 + effect``) with two deliberate
+    choices that matter under the challenge's unpaired data:
+
+    * **The delta depends on ``ko`` ONLY, not the individual control cell.** Control and
+      perturbed cells are randomly paired, so a delta that saw ``x_0`` would let MSE cancel it
+      and collapse to the marginal mean ``mu_pert(ko)`` (losing all cell variance). Constrained
+      to ``ko``, the MSE optimum is instead the mean *shift* ``Delta(ko) = mu_pert - mu_ctrl``
+      applied to every cell, so the control distribution's spread is preserved and the mean
+      lands correctly. It is also robust to control noise: per-cell noise averages out of the
+      scored pseudobulk, whereas a control-dependent delta would be attenuated by it.
+    * **``Delta`` comes from a smooth, bounded conditioner** (a ``KernelFiLM`` emitting the
+      full gene delta, ``output_size = num_genes``). Its convex-hull bound then constrains the
+      DE magnitude *directly* -- the anti-overshoot property landing on the exact scored
+      quantity -- and its smoothness makes held-out genes interpolate rather than collapse.
+
+    No Euler integration, so no discretisation error and no off-manifold drift; and because
+    the model returns expression directly, ``score_local`` predicts it through its ``else``
+    (non-``sample``) branch unchanged.
+
+    Parameters
+    ----------
+    conditioner : nn.Module
+        Maps the perturbation embedding ``ko_vec`` (shape ``(B, embed_dim)``) to the gene
+        delta (shape ``(B, num_genes)``). A :class:`~src.models.components.flow_model.KernelFiLM`
+        with ``output_size = num_genes`` is the intended choice.
+    """
+
+    def __init__(self, conditioner: nn.Module) -> None:
+        super().__init__()
+        self.conditioner = conditioner
+
+    def forward(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Predict perturbed expression as control plus a perturbation-only shift.
+
+        Args:
+            inputs (dict): Batch with ``"exp_vec"`` (control expression, model space) and
+                ``"ko_vec"`` (perturbation embedding).
+
+        Returns:
+            torch.Tensor: Predicted perturbed expression, shape ``(B, num_genes)``, clamped
+            non-negative (the inputs are ``log1p`` of a non-negative quantity).
+        """
+        x_0 = inputs["exp_vec"]
+        delta = self.conditioner(inputs["ko_vec"])  # depends on ko only
+        return (x_0 + delta).relu()
+
+
 class CellModelSimple(nn.Module):
     """
     Very basic, simple model:

@@ -434,7 +434,9 @@ class BatchDiffExpError(nn.Module):
 
     So a PERFECT prediction scores only **0.151** under that cosine -- five sixths of its
     gradient pushes on one cell's sampling noise, which nothing can predict. The same
-    arithmetic is why `val/sample_diff_exp` sits near 0.6 and moves so little.
+    arithmetic is why a per-cell delta-cosine error sits near 0.6 and moves so little (this
+    was the since-removed `val/sample_diff_exp`; the epoch-level `val/diff_exp_agg` avoids it
+    by pooling each perturbation's cells first).
 
     Averaging the cells of a perturbation first, and referencing the POOLED control mean
     rather than the paired cell, takes that ceiling from 0.151 to 1.0 -- and makes the
@@ -541,6 +543,220 @@ class BatchDiffExpError(nn.Module):
         if not bool(keep_group.any()):
             return torch.zeros((), device=pred.device, dtype=y_pred.dtype)
         calc = calc[keep_group]
+
+        if self.reduction == "sum":
+            return calc.sum().to(y_pred.dtype)
+        elif self.reduction == "mean":
+            return calc.mean().to(y_pred.dtype)
+        return calc.to(y_pred.dtype)
+
+
+class BatchDeltaMagnitudeLoss(nn.Module):
+    """Undershoot penalty on each perturbation's pseudobulk delta MAGNITUDE.
+
+    The magnitude counterpart of :class:`BatchDiffExpError` (which matches the pseudobulk
+    delta *direction* via cosine). It exists to counter the MSE shrinkage that leaves the
+    flow model direction-correct but magnitude-collapsed: on the HepG2 cross-context val
+    (2026-09-12) ``specific_cos`` reached 0.28 (right direction) while ``delta_ratio`` sat
+    at 0.23 and ``genevar_ratio`` at 0.02. Under squared error a shrunk prediction is the
+    risk-minimising point estimate when the per-perturbation response is uncertain, so the
+    model hedges its magnitude; DE-weighting tilts *which genes* count but does nothing
+    against the shrinkage itself.
+
+    What it computes
+    ----------------
+    Within the batch, group cells by ``ko_id`` (as :class:`BatchDiffExpError`); per group
+    of at least ``min_group_size`` cells, over measured genes, the group-mean VELOCITIES::
+
+        v_pred = mean_group(y_pred)                        # predicted mean velocity
+        v_true = mean_group(y_true)                        # true mean velocity (= mu_p - control_mean)
+        m_pred = ||v_pred||_w ,  m_true = ||v_true||_w      # DE-weighted L2 magnitude
+        loss   = mean_p relu(1 - m_pred / m_true)^2         # penalise UNDERSHOOT only
+
+    Why the mean VELOCITY, not the delta ``mu_p - xbar``: referencing the batch control mean
+    adds a per-group ``(control_group_mean - xbar)`` term that, at ~32 cells, is as large as
+    the perturbation signal and does NOT scale with the prediction -- it inflates ``m_pred``
+    so the ratio reads ~0.9 even for a 0.2x-shrunk prediction (measured), and the term barely
+    pushes. The mean velocity has no such additive term: ``mean(alpha * y_true) ==
+    alpha * mean(y_true)`` exactly, so the ratio reads the shrink factor directly, and a
+    mean-collapsed model (velocity ~ ``globalmean - control``) has near-zero mean-velocity
+    magnitude and is correctly penalised.
+
+    Direction-preserving (the load-bearing property)
+    -------------------------------------------------
+    The gradient of ``||v_pred||`` w.r.t. ``v_pred`` is ``v_pred / ||v_pred||`` -- it points
+    ALONG the model's own predicted mean velocity. So this term inflates the response the
+    model already predicts; it can NOT rotate a right direction into a wrong one. That is the
+    categorical difference from a contrastive term, which moves predictions apart in a
+    direction-agnostic way and manufactured wrong-direction magnitude that broke nmae
+    (real-panel -0.283). Magnitude is grown only along the chosen axis, and only when it
+    undershoots -- ``relu`` zeroes the term once ``m_pred >= m_true``, so it can never drive
+    an overshoot (which would blow up nmae, the property the KernelFiLM convex-hull bound
+    protects). ``genevar`` recovers as a byproduct: scaling each perturbation up along its
+    own (already correctly-differing, per ``specific_cos``) direction raises the
+    between-perturbation variance without ever explicitly forcing perturbations apart.
+
+    DE-weighted magnitude
+    ---------------------
+    With ``de_weighted`` (default), the norm is weighted by the same SD-relative DE weight
+    as :class:`BatchDEAwareMSELoss` (reused by composition), so magnitude is matched WHERE
+    THE DE GENES ARE, not on high-abundance counting noise. Per-cell weights are pooled to a
+    per-group per-gene weight. Only the weight's per-gene *shape* matters: a global scale
+    cancels in the ratio ``m_pred / m_true``.
+
+    Controls and null perturbations are dropped
+    -------------------------------------------
+    A group whose true magnitude is below ``min_rel_true_mag`` times the batch-mean true
+    magnitude is skipped. This excludes the non-targeting control (whose true delta is ~0 by
+    construction, and which the ratio would otherwise ask the model to give a spurious
+    magnitude) and stabilises the ratio denominator -- without needing to know which
+    ``ko_id`` is the control, so it stays batch-only.
+
+    Requires ``ko_id`` in the batch dict, like :class:`BatchDiffExpError`; raises otherwise.
+
+    Parameters
+    ----------
+    threshold, temperature, de_eps : float
+        Passed to the internal :class:`BatchDEAwareMSELoss` used only for its ``.weights()``.
+        Ignored when ``de_weighted`` is False.
+    de_weighted : bool
+        Weight the magnitude by the SD-relative DE weight (True) or use a plain L2 norm
+        (False).
+    min_group_size : int
+        Groups with fewer cells are dropped -- a one-cell "pseudobulk" is the noisy quantity
+        this loss exists to avoid.
+    min_rel_true_mag : float
+        Drop a group whose true magnitude is below this fraction of the batch-mean true
+        magnitude (excludes controls / null perturbations). ``0`` keeps every group.
+    eps : float
+        Numerical floor for the norms and the ratio denominator.
+    velocity_target : bool
+        The ``y_true + control_exp = mu_p`` identity; True for the flow model.
+    reduction : {"mean", "sum", None}
+        Over the kept perturbation groups.
+    """
+
+    def __init__(
+        self,
+        threshold: float = 0.15,
+        temperature: float = 0.05,
+        de_eps: float = 1e-2,
+        de_weighted: bool = True,
+        min_group_size: int = 2,
+        min_rel_true_mag: float = 0.1,
+        eps: float = 1e-8,
+        velocity_target: bool = True,
+        reduction: str | None = "mean",
+    ) -> None:
+        super().__init__()
+        if min_group_size < 1:
+            raise ValueError(f"min_group_size must be >= 1, got {min_group_size}")
+        if not 0.0 <= min_rel_true_mag < 1.0:
+            raise ValueError(
+                f"min_rel_true_mag must be in [0, 1), got {min_rel_true_mag}"
+            )
+        self.de_weighted = de_weighted
+        self.min_group_size = min_group_size
+        self.min_rel_true_mag = min_rel_true_mag
+        self.eps = eps
+        self.velocity_target = velocity_target
+        self.reduction = reduction
+        # Reused only for its no-grad `.weights()`. `normalise=False` because a per-group
+        # weight scale cancels in the m_pred/m_true ratio -- only the per-gene shape counts.
+        self._de = BatchDEAwareMSELoss(
+            threshold=threshold,
+            temperature=temperature,
+            eps=de_eps,
+            normalise=False,
+            velocity_target=velocity_target,
+        )
+
+    def extra_repr(self) -> str:
+        return (
+            f"de_weighted={self.de_weighted}, min_group_size={self.min_group_size}, "
+            f"min_rel_true_mag={self.min_rel_true_mag}, "
+            f"velocity_target={self.velocity_target}"
+        )
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        control_exp: torch.Tensor,
+        ko_id: torch.Tensor | None = None,
+        gene_mask: torch.Tensor | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        if ko_id is None:
+            raise ValueError(
+                "BatchDeltaMagnitudeLoss needs `ko_id` to group cells by perturbation, but "
+                "the training step did not pass it. Forward it from the batch dict."
+            )
+        # float32 throughout: a group mean over 18,080 genes in bfloat16 loses most of its
+        # precision, and the magnitudes here are small differences.
+        pred = y_pred.float()
+        target = y_true.float()
+
+        uniq, inverse = torch.unique(ko_id, return_inverse=True)
+        n_groups = int(uniq.numel())
+        counts = torch.zeros(n_groups, device=pred.device, dtype=pred.dtype)
+        counts.index_add_(0, inverse, torch.ones_like(inverse, dtype=pred.dtype))
+        denom = counts.unsqueeze(1).clamp_min(1.0)
+
+        sum_pred = torch.zeros(
+            n_groups, pred.shape[1], device=pred.device, dtype=pred.dtype
+        )
+        sum_true = torch.zeros_like(sum_pred)
+        sum_pred.index_add_(0, inverse, pred)
+        sum_true.index_add_(0, inverse, target)
+
+        # Group-mean VELOCITIES, NOT deltas referenced to xbar. Referencing xbar would add
+        # a per-group (control_group_mean - xbar) term that, at ~32 cells, is as large as the
+        # perturbation signal -- it inflates ||d_pred|| so the ratio sits near 1 even for a
+        # heavily shrunk prediction (measured: a 0.2x velocity gave ratio ~0.9). The mean
+        # velocity has no such additive term: mean(alpha * y_true) = alpha * mean(y_true)
+        # exactly, so the ratio reads the shrink directly, and a mean-collapsed model (velocity
+        # ~ globalmean - control) has near-zero mean-velocity magnitude -> correctly penalised.
+        d_pred = sum_pred / denom
+        d_true = (sum_true / denom).detach()  # target: no gradient
+
+        # Per-gene weight for the norm, pooled from the same SD-relative DE weight the
+        # anchor MSE uses. Uniform (ones) when `de_weighted` is off.
+        if self.de_weighted:
+            w_cell = self._de.weights(y_true, control_exp, gene_mask).to(pred.dtype)
+            sum_w = torch.zeros_like(sum_pred)
+            sum_w.index_add_(0, inverse, w_cell)
+            w_grp = sum_w / denom
+        else:
+            w_grp = torch.ones_like(sum_pred)
+
+        if gene_mask is not None:
+            # `_apply_mask` zeroes the prediction/target on unmeasured genes but leaves
+            # `control_exp` holding `fill_profile`, so restrict the norm to genes this
+            # group's source actually measured.
+            mask = gene_mask.float()
+            sum_mask = torch.zeros_like(sum_pred)
+            sum_mask.index_add_(0, inverse, mask)
+            keep = (sum_mask / denom > 0.5).to(pred.dtype)
+            d_pred = d_pred * keep
+            d_true = d_true * keep
+            w_grp = w_grp * keep
+
+        m_pred = torch.sqrt((w_grp * d_pred.pow(2)).sum(dim=-1) + self.eps)
+        m_true = torch.sqrt((w_grp * d_true.pow(2)).sum(dim=-1) + self.eps)
+
+        keep_group = counts >= self.min_group_size
+        if self.min_rel_true_mag > 0 and bool(keep_group.any()):
+            floor = self.min_rel_true_mag * m_true[keep_group].mean()
+            keep_group = keep_group & (m_true > floor)
+
+        if not bool(keep_group.any()):
+            return torch.zeros((), device=pred.device, dtype=y_pred.dtype)
+
+        ratio = m_pred[keep_group] / m_true[keep_group].clamp_min(self.eps)
+        calc = torch.relu(1.0 - ratio).pow(
+            2
+        )  # undershoot only; zero once m_pred >= m_true
 
         if self.reduction == "sum":
             return calc.sum().to(y_pred.dtype)
