@@ -1,17 +1,40 @@
-import traceback
+import os
 
-import hydra
-import lightning
-import rich
-import rootutils
-import torch
-import wandb
-from dotenv import load_dotenv
-from lightning import LightningDataModule, LightningModule, Trainer
-from omegaconf import DictConfig, OmegaConf
+# On a shared 112-core box PyTorch sizes its intra-op pool at one thread per core
+# and every forked dataloader worker opens its own BLAS pool on top of that, so
+# the job claims far more CPU than it can use. The nets are small MLPs living on
+# the GPU, so none of that parallelism buys anything. These pools size themselves
+# at import time, hence the placement above `import torch`; the dataloader
+# workers are forked later and inherit the same environment.
+#
+# `setdefault` so `OMP_NUM_THREADS=... python src/train.py` still wins.
+for _var in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_var, "1")
+
+import traceback  # noqa: E402
+
+import hydra  # noqa: E402
+import lightning  # noqa: E402
+import rich  # noqa: E402
+import rootutils  # noqa: E402
+import torch  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+from lightning import (  # noqa: E402
+    LightningDataModule,
+    LightningModule,
+    Trainer,
+)
+from omegaconf import DictConfig, OmegaConf  # noqa: E402
+
+import wandb  # noqa: E402
 
 rootutils.setup_root(__file__, indicator="pixi.toml", pythonpath=True)
-from src.utils.umap_utilities import perform_umap, plot_output_plotly  # noqa: E402
 
 # The configs resolve paths via ${oc.env:...}. Load .env before Hydra composes
 # them so the file the README asks you to create is actually honoured, rather
@@ -22,6 +45,10 @@ torch.cuda.empty_cache()
 
 console = rich.console.Console()
 torch.set_float32_matmul_precision("high")
+
+# The env vars above cap the *workers*; this caps the main process, which does
+# need a little parallelism for the host-side half of the training step.
+torch.set_num_threads(int(os.environ.get("VCC_NUM_THREADS", "4")))
 
 
 @hydra.main(version_base=None, config_path="../config/", config_name="train.yaml")
@@ -63,7 +90,7 @@ def main(conf: DictConfig):
     trainer.fit(model, datamodule, ckpt_path=conf.get("ckpt_path"))
 
     try:
-        if not conf.trainer.fast_dev_run:
+        if (not conf.trainer.fast_dev_run) and conf.predict:
             save_path = conf.callbacks.model_checkpoint.dirpath
             console.log("Prediction and quick evaluation")
             preds: list[torch.Tensor] = trainer.predict(model, datamodule)
@@ -82,6 +109,9 @@ def main(conf: DictConfig):
                 console.log("test_data has no `perturbed_genes`; skipping UMAP")
             else:
                 console.log("Running UMAP")
+                # Imported here so runs with `predict: false` never pay the umap import.
+                from src.utils.umap_utilities import perform_umap, plot_output_plotly
+
                 # UMAP goes through numpy, which has no bfloat16; under
                 # `bf16-mixed` the predictions come back as bfloat16.
                 reduced = perform_umap(y_pred.float(), genes=genes)

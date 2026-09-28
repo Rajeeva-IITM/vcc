@@ -1,0 +1,11 @@
+# https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.callbacks.LearningRateMonitor.html
+#
+# Pure logging -- it cannot affect training. Added because the learning rate was not
+# recorded at all, which made reading the CosineAnnealingWarmRestarts cycles of the
+# 2026-08-28 runs guesswork. It also logs each param group separately, which matters for
+# `model_flow_learned_embedding`: the embedding table lives in its own group so that
+# weight decay can be switched off for it, and `embedding_lr` retunes that group alone.
+lr_monitor:
+  _target_: lightning.pytorch.callbacks.LearningRateMonitor
+  logging_interval: epoch
+  log_momentum: false

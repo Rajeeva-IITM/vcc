@@ -5,6 +5,7 @@ outputs/
 results/
 
 */lightning_logs/*
+*graphify*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -169,3 +170,9 @@ cython_debug/
 
 # marimo session cache
 notebook/__marimo__/
+
+# local clutter
+wandb/
+__marimo__/
+*.out
+0.22

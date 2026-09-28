@@ -2,10 +2,17 @@ defaults:
   - model_checkpoint
   - model_summary
   - rich_progress_bar
+  - lr_monitor
 
 model_checkpoint:
-  monitor: "val/loss"
-  mode: "min"
+  # Select on the transfer metric, not the loss. val/loss and specific_cos are
+  # decoupled: the quant+Poincare run's val/loss bottomed at epoch 1 (the collapsed
+  # near-blind model) and rose thereafter, while specific_cos peaked at epoch 36 --
+  # so monitoring val/loss (min) saved the WORST epoch for direction. specific_cos
+  # (cosine of the perturbation-specific direction, common shift removed) is the
+  # quantity that tracks generalisation; save the epoch that maximises it.
+  monitor: "val/specific_cos"
+  mode: "max"
   save_last: 5
 
 model_summary:

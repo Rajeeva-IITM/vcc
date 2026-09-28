@@ -10,9 +10,13 @@ defaults:
 
 seed: 42
 
+predict: false # Save time by not predicting unnecessarily (There's separate script for 2026)
+
 logging:
   wandb:
     job_type: VCC
 
 ckpt_path: null # In case one wants to resume training
-compile: true
+# Inductor spawns 32 compile-worker processes at startup; `reduce-overhead`
+# (cudagraphs) buys little for a few small MLPs. Turn on only if you need it.
+compile: false
