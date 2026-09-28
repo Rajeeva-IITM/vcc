@@ -4,7 +4,7 @@ net:
   num_genes: 18080
   perturbation_embed_dim: 256
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
     # - _target_: src.models.components.loss_functions.SoftDiceLoss
     #   temperature: 2
@@ -12,7 +12,7 @@ loss_fn:
     # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
     #   temperature: 0.75
     #   threshold: 1.5
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.common.GenewiseMSELoss
     # - _target_: src.models.components.loss_functions.LaplacianRegularizerLoss
   weights:
     - 1

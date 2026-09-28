@@ -44,9 +44,9 @@ net:
     ensure_output_positive: True
   fusion_type: 'cross_attn'
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.MyMSELoss
+    - _target_: src.models.components.loss_functions.common.MyMSELoss
   weights:
     - 1
 optimizer:

@@ -22,16 +22,16 @@ net:
     activation: relu
     no_processing: true
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.SoftDiceLoss
+    - _target_: src.models.components.loss_functions.expression.SoftDiceLoss
       temperature: 0.25
       threshold: 0.4
-    - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+    - _target_: src.models.components.loss_functions.expression.DiffExpAwareMSELoss
       temperature: 0.25
       threshold: 0.4
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    - _target_: src.models.components.loss_functions.DiffGeneBCELoss
+    - _target_: src.models.components.loss_functions.common.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.expression.DiffGeneBCELoss
       pos_weight: 10
       temperature: 0.15 # CP10K-calibrated (~10% DE); was 0.1/1 on log1p(raw)
       threshold: 0.4

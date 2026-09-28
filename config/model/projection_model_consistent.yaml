@@ -37,20 +37,20 @@ net:
     ensure_output_positive: True
   fusion_type: bilinear
 primary_loss:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.HybridGeneLoss
+    - _target_: src.models.components.loss_functions.expression.HybridGeneLoss
       alpha: 3
       temperature: 0.1 # CP10K-calibrated; was 0.25 on log1p(raw)
       gamma: 1
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.common.GenewiseMSELoss
   weights:
     - 1.5
     - 0.5
 contrastive_loss:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
+    - _target_: src.models.components.loss_functions.common.WeightedContrastiveLoss
       temperature: 0.5
       alpha: 2
   weights:

@@ -49,15 +49,15 @@ net:
     ensure_output_positive: True
   fusion_type: bilinear
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.MyMSELoss
+    - _target_: src.models.components.loss_functions.common.MyMSELoss
     # Two-sided KL pulling mean gate activation toward the 2.3% DE rate measured
     # by Mann-Whitney over all 300 perturbations (FDR<0.05, |log2FC|>=0.25).
     # Weight 0.01 makes the term ~54% of the MSE at gate=0.87 and ~1% by the time
     # the gate reaches 0.1, so it pushes hard while wrong and then gets out of the
     # way. Drop to 0.003 for a gentler pull.
-    - _target_: src.models.components.loss_functions.GateSparsityLoss
+    - _target_: src.models.components.loss_functions.common.GateSparsityLoss
       target_rate: 0.023
       mode: kl
       per_cell: true

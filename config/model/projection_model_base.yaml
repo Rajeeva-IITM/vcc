@@ -45,24 +45,24 @@ net:
     ensure_output_positive: True
   fusion_type: bilinear
 primary_loss:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.SoftJaccardLoss
+    - _target_: src.models.components.loss_functions.expression.SoftJaccardLoss
       temperature: 0.25 # CP10K-calibrated; was 0.1/1.5 on log1p(raw)
       threshold: 0.4
-    - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+    - _target_: src.models.components.loss_functions.expression.DiffExpAwareMSELoss
       temperature: 0.25
       threshold: 0.4
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.common.GenewiseMSELoss
     # - _target_: src.models.components.loss_functions.AdjacencySimilarityLoss
   weights:
     - 1
     - 1
     - 0.75
 contrastive_loss:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.WeightedContrastiveLoss
+    - _target_: src.models.components.loss_functions.common.WeightedContrastiveLoss
       # temperature: 0.1
       alpha: 1
   weights:

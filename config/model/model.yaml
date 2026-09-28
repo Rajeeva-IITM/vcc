@@ -37,15 +37,15 @@ net:
     ensure_output_positive: True
   fusion_type: bilinear
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
-    - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
+    - _target_: src.models.components.loss_functions.expression.DiffExpAwareMSELoss
       # Thresholds below are calibrated for the CP10K scale (~10% of gene-cells
       # called DE). See src/prepare_data.py --calibrate. On the old log1p(raw)
       # scale these were 1.0-1.5; leaving them there calls ~0.02% DE.
       temperature: 0.25
       threshold: 0.4
-    - _target_: src.models.components.loss_functions.MyMSELoss
+    - _target_: src.models.components.loss_functions.common.MyMSELoss
   weights:
     - 1
     - 0.25

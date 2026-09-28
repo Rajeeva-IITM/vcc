@@ -35,7 +35,7 @@ net:
     dropout: 0.0
     activation: silu
 loss_fn:
-  _target_: src.models.components.loss_functions.CompositeLoss
+  _target_: src.models.components.loss_functions.common.CompositeLoss
   loss_functions:
     # - _target_: src.models.components.loss_functions.SoftDiceLoss
     #   temperature: 1
@@ -43,8 +43,8 @@ loss_fn:
     # - _target_: src.models.components.loss_functions.DiffExpAwareMSELoss
     #   temperature: 0.75
     #   threshold: 1.5
-    - _target_: src.models.components.loss_functions.GenewiseMSELoss
-    - _target_: src.models.components.loss_functions.DiffGeneBCELoss
+    - _target_: src.models.components.loss_functions.common.GenewiseMSELoss
+    - _target_: src.models.components.loss_functions.expression.DiffGeneBCELoss
       pos_weight: 3
       temperature: 0.25 # CP10K-calibrated; was 1/0 on log1p(raw)
       threshold: 0.4
